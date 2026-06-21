@@ -21,7 +21,14 @@ This pulls the patched [llama.cpp](https://github.com/AndrewNagikh/llama.cpp) fo
 
 ## Build
 
-Requires: `cmake`, `g++`, `git`, OpenSSL dev headers.
+Requires: `cmake`, `g++`/`clang`, `git`, OpenSSL dev headers.
+
+On macOS:
+
+```bash
+xcode-select --install
+brew install cmake
+```
 
 ```bash
 ./build.sh
