@@ -28,6 +28,33 @@ else
   JOBS=4
 fi
 
+has_cuda_toolkit() {
+  local nvcc=""
+  if command -v nvcc >/dev/null 2>&1; then
+    nvcc="$(command -v nvcc)"
+  elif [[ -x /usr/local/cuda/bin/nvcc ]]; then
+    nvcc="/usr/local/cuda/bin/nvcc"
+  else
+    return 1
+  fi
+
+  # ggml-cuda links CUDA::cublas — need dev libs, not just nvidia-smi driver
+  if [[ -f /usr/local/cuda/include/cublas_v2.h ]]; then
+    return 0
+  fi
+  if [[ -f /usr/include/cublas_v2.h ]]; then
+    return 0
+  fi
+  if [[ -f /usr/local/cuda/lib64/libcublas.so ]] || \
+     ls /usr/lib/x86_64-linux-gnu/libcublas.so* >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo "build: found nvcc ($nvcc) but cuBLAS dev libs missing" >&2
+  echo "build: install full CUDA toolkit, e.g. sudo apt install cuda-toolkit-12-6" >&2
+  return 1
+}
+
 detect_gpu_cmake_args() {
   GPU_CMAKE_EXTRA=()
 
@@ -47,8 +74,13 @@ detect_gpu_cmake_args() {
     GPU_CMAKE_EXTRA=(-DGGML_METAL=ON)
     echo "build: macOS detected → Metal GPU enabled"
   elif command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
-    GPU_CMAKE_EXTRA=(-DGGML_CUDA=ON)
-    echo "build: NVIDIA GPU detected → CUDA enabled"
+    if has_cuda_toolkit; then
+      GPU_CMAKE_EXTRA=(-DGGML_CUDA=ON)
+      echo "build: NVIDIA GPU + CUDA toolkit → CUDA enabled"
+    else
+      echo "build: NVIDIA GPU detected but CUDA toolkit incomplete → CPU only"
+      echo "build: (install cuda-toolkit, or force: GGML_CUDA=ON ./build.sh)"
+    fi
   else
     echo "build: no GPU backend detected → CPU only"
   fi
