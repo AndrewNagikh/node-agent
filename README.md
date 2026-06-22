@@ -51,7 +51,8 @@ ORCH=http://ORCHESTRATOR_IP:9000
   --model "$MODEL" \
   --listen 0.0.0.0:9001 \
   --orchestrator "$ORCH" \
-  --node-id node-b
+  --node-id node-b \
+  --score 50
 ```
 
 Use a unique `--node-id` and `--listen` port on each machine (`node-a`, `node-b`, `node-c`).
