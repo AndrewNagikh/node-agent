@@ -54,11 +54,24 @@ detect_gpu_cmake_args() {
   fi
 }
 
-TARGETS=(node_agent split_gen3_a split_gen3_b split_gen3_c)
-if [[ "${1:-}" == "all" ]]; then
-  TARGETS+=(orchestrator)
-  shift
-fi
+BUILD_MODE="${1:-agents}"
+shift || true
+
+case "$BUILD_MODE" in
+  all)
+    TARGETS=(node_agent split_gen3_a split_gen3_b split_gen3_c orchestrator)
+    ;;
+  orchestrator)
+    TARGETS=(orchestrator)
+    ;;
+  agents)
+    TARGETS=(node_agent split_gen3_a split_gen3_b split_gen3_c)
+    ;;
+  *)
+    echo "usage: $0 [agents|orchestrator|all]" >&2
+    exit 1
+    ;;
+esac
 
 detect_gpu_cmake_args
 

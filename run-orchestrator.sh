@@ -45,7 +45,7 @@ BIN="$ROOT/llama.cpp/build/bin/orchestrator"
 if [[ ! -x "$BIN" ]]; then
   if [[ "$DO_BUILD" == true ]]; then
     echo "run-orchestrator: building orchestrator ..."
-    "$ROOT/build.sh" all
+    "$ROOT/build.sh" orchestrator
   else
     echo "run-orchestrator: $BIN not found" >&2
     exit 1
