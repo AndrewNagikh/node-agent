@@ -99,8 +99,15 @@ case "$BUILD_MODE" in
   agents)
     TARGETS=(node_agent split_gen3_a split_gen3_b split_gen3_c)
     ;;
+  e2e)
+    TARGETS=(
+      orchestrator node_agent split_gen3_a split_gen3_b split_gen3_c
+      test-cluster-e2e test-cluster-e2e-install-reuse
+      test-cluster-e2e-node-loss test-cluster-e2e-orchestrator-restart
+    )
+    ;;
   *)
-    echo "usage: $0 [agents|orchestrator|all]" >&2
+    echo "usage: $0 [agents|orchestrator|all|e2e]" >&2
     exit 1
     ;;
 esac
