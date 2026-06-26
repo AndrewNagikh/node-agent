@@ -13,6 +13,7 @@ Start a distributed node agent (auto-detects GPU at build time, benchmarks on st
 
 Environment (optional):
   MODEL            optional local GGUF (legacy; layer-first mode omits this)
+  MODELS_DIR       per-node layer store directory
   ORCHESTRATOR     orchestrator URL, e.g. http://192.168.50.154:9000
   NODE_ID          node-a | node-b | node-c  (default: node-a)
   PORT             HTTP listen port (default: by NODE_ID)
@@ -26,6 +27,7 @@ Options:
   --node-id ID
   --port PORT
   --advertise-host IP
+  --models-dir DIR
   --rebenchmark
   --build          build before run if binary missing (default)
   --no-build
@@ -42,6 +44,7 @@ ORCHESTRATOR="${ORCHESTRATOR:-}"
 NODE_ID="${NODE_ID:-node-a}"
 PORT="${PORT:-}"
 ADVERTISE_HOST="${ADVERTISE_HOST:-}"
+MODELS_DIR="${MODELS_DIR:-}"
 REBENCHMARK="${REBENCHMARK:-false}"
 DO_BUILD=true
 
@@ -52,6 +55,7 @@ while [[ $# -gt 0 ]]; do
     --node-id)         NODE_ID="$2"; shift 2 ;;
     --port)            PORT="$2"; shift 2 ;;
     --advertise-host)  ADVERTISE_HOST="$2"; shift 2 ;;
+    --models-dir)      MODELS_DIR="$2"; shift 2 ;;
     --rebenchmark)     REBENCHMARK=true; shift ;;
     --build)           DO_BUILD=true; shift ;;
     --no-build)        DO_BUILD=false; shift ;;
@@ -87,6 +91,10 @@ if [[ -n "$MODEL" ]]; then
   ARGS+=(--model "$MODEL")
 fi
 
+if [[ -n "$MODELS_DIR" ]]; then
+  ARGS+=(--models-dir "$MODELS_DIR")
+fi
+
 if [[ "$REBENCHMARK" == true || "$REBENCHMARK" == "1" ]]; then
   ARGS+=(--rebenchmark)
 fi
@@ -97,6 +105,9 @@ if [[ -n "$MODEL" ]]; then
   echo "run-agent: model=$MODEL"
 else
   echo "run-agent: layer-first mode (no local MODEL)"
+fi
+if [[ -n "$MODELS_DIR" ]]; then
+  echo "run-agent: models_dir=$MODELS_DIR"
 fi
 
 node_agent_wsl_portproxy_hint
