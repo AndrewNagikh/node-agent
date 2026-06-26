@@ -337,6 +337,10 @@ def test_model(cfg: dict, skip_sync: bool = False, fast: bool = False) -> ModelR
     text = out.get("text", out.get("content", ""))
     tokens = out.get("tokens", [])
     bad = not text.strip() or text.strip() == "enenenen" or (tokens and len(set(tokens)) == 1 and tokens[0] in (0, 268))
+    if not bad and tokens and len(tokens) >= 4 and len(set(tokens)) == 1:
+        bad = True
+    if not bad and text and len(text) >= 8 and len(set(text.split())) == 1 and len(text) > 20:
+        bad = True
     result.generate_text = text
     result.steps.append(step("generate", status == 200 and not bad,
                              f"text={text!r}" if text else json.dumps(out)))
