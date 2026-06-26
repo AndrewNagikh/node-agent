@@ -78,7 +78,6 @@ if [[ "$DO_BUILD" == true ]]; then
   node_agent_ensure_built "$ROOT"
 fi
 
-MODEL="$(node_agent_find_model)"
 PORT="${PORT:-$(node_agent_default_port "$NODE_ID")}"
 ADVERTISE_HOST="$(node_agent_detect_lan_ip)"
 node_agent_ensure_hf_token "$ROOT"
@@ -92,6 +91,10 @@ ARGS=(
 )
 
 if [[ -n "$MODEL" ]]; then
+  if [[ ! -f "$MODEL" ]]; then
+    echo "run-agent: MODEL not found: $MODEL" >&2
+    exit 1
+  fi
   ARGS+=(--model "$MODEL")
 fi
 

@@ -53,11 +53,14 @@ if [[ ! -x "$BIN" ]]; then
   fi
 fi
 
-MODEL="$(node_agent_find_model)"
 node_agent_ensure_hf_token "$ROOT"
 
 ARGS=(--listen "0.0.0.0:${PORT}")
 if [[ -n "$MODEL" ]]; then
+  if [[ ! -f "$MODEL" ]]; then
+    echo "run-orchestrator: MODEL not found: $MODEL" >&2
+    exit 1
+  fi
   ARGS+=(--model "$MODEL")
   echo "run-orchestrator: listen=0.0.0.0:$PORT model=$MODEL"
 else

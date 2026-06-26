@@ -52,26 +52,12 @@ node_agent_default_port() {
   esac
 }
 
+# Legacy helper: only returns MODEL when explicitly set (no auto-discovery).
 node_agent_find_model() {
   if [[ -n "${MODEL:-}" && -f "$MODEL" ]]; then
     echo "$MODEL"
     return
   fi
-
-  local -a candidates=(
-    "$HOME/models/llama-3.2-1b-instruct-q4_k_m.gguf"
-    "$HOME/.cache/huggingface/hub/models--hugging-quants--Llama-3.2-1B-Instruct-Q4_K_M-GGUF/snapshots/"*/llama-3.2-1b-instruct-q4_k_m.gguf
-    /mnt/c/Users/*/models/llama-3.2-1b-instruct-q4_k_m.gguf
-  )
-
-  local p
-  for p in "${candidates[@]}"; do
-    if [[ -f "$p" ]]; then
-      echo "$p"
-      return
-    fi
-  done
-
   echo ""
 }
 
