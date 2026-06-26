@@ -166,8 +166,9 @@ def timed_step(name: str, ok: bool, detail: str = "", elapsed_s: float = 0.0) ->
     return step(name, ok, (detail + suffix).strip(": "))
 
 
-def analyze_blob_ops(plan: dict, family: str) -> tuple[bool, str, list[dict]]:
+def analyze_blob_ops(plan: dict, family: str, model_id: str = "") -> tuple[bool, str, list[dict]]:
     ops = plan.get("install_plan", plan).get("operations", [])
+    op_count = plan.get("operation_count", len(ops))
     blob_ops = []
     for op in ops:
         dl = op.get("download") or op
@@ -184,6 +185,15 @@ def analyze_blob_ops(plan: dict, family: str) -> tuple[bool, str, list[dict]]:
     if family == "qwen":
         names = {(b["blob_id"], b["tensor_name"]) for b in blob_ops}
         need = {("output_head", "output.weight"), ("output_norm", "output_norm.weight")}
+        if op_count == 0 and model_id and coverage_state(model_id) == "READY":
+            installed = {
+                (L.get("blob_id"), L.get("tensor_name"))
+                for L in model_status(model_id).get("actual", {}).get("layers", [])
+                if L.get("blob_id")
+            }
+            if need <= installed:
+                return True, "blobs already installed", blob_ops
+            return False, f"missing installed blobs: {need - installed}", blob_ops
         missing = need - names
         if missing:
             return False, f"missing qwen blob ops: {missing}", blob_ops
@@ -274,7 +284,7 @@ def test_model(cfg: dict, skip_sync: bool = False, fast: bool = False) -> ModelR
             return result
 
         status, out = http("POST", f"/models/{mid}/install-plan", {}, timeout=120)
-        blob_ok, blob_err, blob_ops = analyze_blob_ops(out, cfg["family"]) if status == 200 else (False, "", [])
+        blob_ok, blob_err, blob_ops = analyze_blob_ops(out, cfg["family"], mid) if status == 200 else (False, "", [])
         result.blob_ops = blob_ops
         op_count = out.get("operation_count", -1) if status == 200 else -1
         result.steps.append(step("install-plan", status == 200 and blob_ok,
