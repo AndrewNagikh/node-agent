@@ -185,6 +185,48 @@ def analyze_blob_ops(plan: dict, family: str, model_id: str = "") -> tuple[bool,
     if family == "qwen":
         names = {(b["blob_id"], b["tensor_name"]) for b in blob_ops}
         need = {("output_head", "output.weight"), ("output_norm", "output_norm.weight")}
+
+        def qwen_blobs_on_layout_nodes() -> bool:
+            if not model_id:
+                return False
+            rec = model_status(model_id)
+            layout = rec.get("layout") or {}
+            desired = layout.get("desired", layout)
+            placements = desired.get("placements", [])
+            if not placements:
+                return False
+            entry_node = final_node = ""
+            last_layer = -1
+            for p in placements:
+                layer = p.get("layer", p.get("layer_index", -1))
+                node = p.get("node", p.get("node_id", ""))
+                if layer == 0:
+                    entry_node = node
+                if layer > last_layer:
+                    last_layer = layer
+                    final_node = node
+            if not entry_node or not final_node:
+                return False
+            layers = rec.get("actual", {}).get("layers", [])
+
+            def ready(node: str, blob_id: str, tensor: str) -> bool:
+                return any(
+                    L.get("node_id") == node
+                    and L.get("blob_id") == blob_id
+                    and L.get("tensor_name") == tensor
+                    and str(L.get("state", "")).lower() == "ready"
+                    for L in layers
+                )
+
+            return (
+                ready(entry_node, "embedding", "token_embd.weight")
+                and ready(final_node, "output_head", "output.weight")
+                and ready(final_node, "output_norm", "output_norm.weight")
+            )
+
+        if qwen_blobs_on_layout_nodes():
+            return True, "blobs on layout nodes", blob_ops
+
         if op_count == 0 and model_id:
             installed = {
                 (L.get("blob_id"), L.get("tensor_name"))
