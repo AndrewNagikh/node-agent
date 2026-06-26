@@ -91,7 +91,11 @@ shift || true
 
 case "$BUILD_MODE" in
   all)
-    TARGETS=(node_agent split_gen3_a split_gen3_b split_gen3_c orchestrator)
+    TARGETS=(
+      node_agent split_gen3_a split_gen3_b split_gen3_c orchestrator
+      gguf_inspect gguf_diff tensor_verify layer_verify
+      materialization_verify logits_compare hidden_state_compare
+    )
     ;;
   verify)
     TARGETS=(
