@@ -77,6 +77,31 @@ node_agent_find_model() {
   return 1
 }
 
+node_agent_ensure_hf_token() {
+  if [[ -n "${HF_TOKEN:-}" ]]; then
+    return 0
+  fi
+
+  if [[ -n "${HUGGINGFACE_HUB_TOKEN:-}" ]]; then
+    export HF_TOKEN="$HUGGINGFACE_HUB_TOKEN"
+    return 0
+  fi
+
+  if [[ -f "$HOME/.cache/huggingface/token" ]]; then
+    export HF_TOKEN="$(tr -d '[:space:]' < "$HOME/.cache/huggingface/token")"
+    return 0
+  fi
+
+  local root="${1:-}"
+  if [[ -n "$root" && -f "$root/.env" ]]; then
+    # shellcheck disable=SC1090
+    set -a
+    # shellcheck disable=SC1091
+    source "$root/.env"
+    set +a
+  fi
+}
+
 node_agent_ensure_built() {
   local root="$1"
   local bin="$root/llama.cpp/build/bin/node_agent"

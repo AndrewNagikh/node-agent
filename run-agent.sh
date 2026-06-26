@@ -18,6 +18,7 @@ Environment (optional):
   PORT             HTTP listen port (default: by NODE_ID)
   ADVERTISE_HOST   LAN IP for other machines (auto-detected if unset)
   REBENCHMARK=1    force re-run benchmark
+  HF_TOKEN         Hugging Face token (faster downloads; or ~/.cache/huggingface/token)
 
 Options:
   --model PATH
@@ -72,6 +73,7 @@ fi
 MODEL="$(node_agent_find_model)"
 PORT="${PORT:-$(node_agent_default_port "$NODE_ID")}"
 ADVERTISE_HOST="$(node_agent_detect_lan_ip)"
+node_agent_ensure_hf_token "$ROOT"
 
 BIN="$ROOT/llama.cpp/build/bin/node_agent"
 ARGS=(

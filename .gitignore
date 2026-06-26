@@ -3,3 +3,4 @@ llama.cpp/.cache/
 *.gguf
 state/
 logs/
+.env
