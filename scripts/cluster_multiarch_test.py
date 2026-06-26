@@ -222,12 +222,14 @@ def ensure_registered(cfg: dict) -> StepResult:
 
 
 def ensure_discovered(cfg: dict) -> StepResult:
-    st = model_status(cfg["model_id"]).get("status", "")
-    if st in ("MANIFEST_PENDING", "MANIFEST_READY", "LAYOUT_READY", "READY"):
+    rec = model_status(cfg["model_id"])
+    st = rec.get("status", "")
+    has_files = bool(rec.get("files"))
+    if st in ("MANIFEST_PENDING", "MANIFEST_READY", "LAYOUT_READY", "READY") and has_files:
         return step("discover", True, f"already {st}")
     status, out = http("POST", f"/models/{cfg['model_id']}/discover", {}, timeout=180)
     ok = status == 200 and out.get("status") == "ok"
-    return step("discover", ok, out.get("error", json.dumps(out)) if not ok else "")
+    return step("discover", ok, out.get("error", json.dumps(out)) if not ok else f"files={out.get('files', 0)}")
 
 
 def ensure_manifest(cfg: dict) -> tuple[StepResult, str]:
