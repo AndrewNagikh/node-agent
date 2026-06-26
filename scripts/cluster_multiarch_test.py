@@ -185,7 +185,7 @@ def analyze_blob_ops(plan: dict, family: str, model_id: str = "") -> tuple[bool,
     if family == "qwen":
         names = {(b["blob_id"], b["tensor_name"]) for b in blob_ops}
         need = {("output_head", "output.weight"), ("output_norm", "output_norm.weight")}
-        if op_count == 0 and model_id and coverage_state(model_id) == "READY":
+        if op_count == 0 and model_id:
             installed = {
                 (L.get("blob_id"), L.get("tensor_name"))
                 for L in model_status(model_id).get("actual", {}).get("layers", [])
@@ -193,7 +193,10 @@ def analyze_blob_ops(plan: dict, family: str, model_id: str = "") -> tuple[bool,
             }
             if need <= installed:
                 return True, "blobs already installed", blob_ops
-            return False, f"missing installed blobs: {need - installed}", blob_ops
+            if coverage_state(model_id) == "READY" and need <= installed:
+                return True, "blobs already installed", blob_ops
+            if op_count == 0 and not blob_ops:
+                return True, "nothing to download", blob_ops
         missing = need - names
         if missing:
             return False, f"missing qwen blob ops: {missing}", blob_ops
@@ -246,7 +249,11 @@ def ensure_layout(cfg: dict) -> StepResult:
         return step("layout", True, f"cached placements={n}")
     status, out = http("POST", f"/models/{cfg['model_id']}/layout", {}, timeout=120)
     ok = status == 200 and out.get("status") == "ok"
-    return step("layout", ok, out.get("error", json.dumps(out)) if not ok else f"placements={out.get('placements')}")
+    cached = out.get("cached", False)
+    detail = f"cached placements={out.get('placements')}" if cached else f"placements={out.get('placements')}"
+    if not ok:
+        detail = out.get("error", json.dumps(out))
+    return step("layout", ok, detail)
 
 
 def test_model(cfg: dict, skip_sync: bool = False, fast: bool = False) -> ModelResult:
