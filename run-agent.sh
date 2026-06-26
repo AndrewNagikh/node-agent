@@ -12,7 +12,7 @@ usage: $0 [options]
 Start a distributed node agent (auto-detects GPU at build time, benchmarks on startup).
 
 Environment (optional):
-  MODEL            path to GGUF model
+  MODEL            optional local GGUF (legacy; layer-first mode omits this)
   ORCHESTRATOR     orchestrator URL, e.g. http://192.168.50.154:9000
   NODE_ID          node-a | node-b | node-c  (default: node-a)
   PORT             HTTP listen port (default: by NODE_ID)
@@ -77,12 +77,15 @@ node_agent_ensure_hf_token "$ROOT"
 
 BIN="$ROOT/llama.cpp/build/bin/node_agent"
 ARGS=(
-  --model "$MODEL"
   --listen "0.0.0.0:${PORT}"
   --advertise-host "$ADVERTISE_HOST"
   --orchestrator "$ORCHESTRATOR"
   --node-id "$NODE_ID"
 )
+
+if [[ -n "$MODEL" ]]; then
+  ARGS+=(--model "$MODEL")
+fi
 
 if [[ "$REBENCHMARK" == true || "$REBENCHMARK" == "1" ]]; then
   ARGS+=(--rebenchmark)
@@ -90,7 +93,11 @@ fi
 
 echo "run-agent: node_id=$NODE_ID port=$PORT advertise=$ADVERTISE_HOST"
 echo "run-agent: orchestrator=$ORCHESTRATOR"
-echo "run-agent: model=$MODEL"
+if [[ -n "$MODEL" ]]; then
+  echo "run-agent: model=$MODEL"
+else
+  echo "run-agent: layer-first mode (no local MODEL)"
+fi
 
 node_agent_wsl_portproxy_hint
 

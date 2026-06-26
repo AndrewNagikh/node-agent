@@ -59,7 +59,6 @@ node_agent_find_model() {
   fi
 
   local -a candidates=(
-    "${MODEL:-}"
     "$HOME/models/llama-3.2-1b-instruct-q4_k_m.gguf"
     "$HOME/.cache/huggingface/hub/models--hugging-quants--Llama-3.2-1B-Instruct-Q4_K_M-GGUF/snapshots/"*/llama-3.2-1b-instruct-q4_k_m.gguf
     /mnt/c/Users/*/models/llama-3.2-1b-instruct-q4_k_m.gguf
@@ -73,8 +72,7 @@ node_agent_find_model() {
     fi
   done
 
-  echo "run-agent: model not found. Set MODEL=/path/to/llama-3.2-1b-instruct-q4_k_m.gguf" >&2
-  return 1
+  echo ""
 }
 
 node_agent_ensure_hf_token() {

@@ -12,7 +12,7 @@ usage: $0 [options]
 Start the distributed orchestrator.
 
 Environment:
-  MODEL     path to GGUF model
+  MODEL     optional path to local GGUF (legacy; layer-first mode omits this)
   PORT      listen port (default: 9000)
   HF_TOKEN  Hugging Face token (faster downloads; or ~/.cache/huggingface/token)
 
@@ -56,5 +56,12 @@ fi
 MODEL="$(node_agent_find_model)"
 node_agent_ensure_hf_token "$ROOT"
 
-echo "run-orchestrator: listen=0.0.0.0:$PORT model=$MODEL"
-exec "$BIN" --model "$MODEL" --listen "0.0.0.0:${PORT}"
+ARGS=(--listen "0.0.0.0:${PORT}")
+if [[ -n "$MODEL" ]]; then
+  ARGS+=(--model "$MODEL")
+  echo "run-orchestrator: listen=0.0.0.0:$PORT model=$MODEL"
+else
+  echo "run-orchestrator: listen=0.0.0.0:$PORT (layer-first — no local MODEL)"
+fi
+
+exec "$BIN" "${ARGS[@]}"
