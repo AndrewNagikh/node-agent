@@ -19,6 +19,7 @@ Environment (optional):
   PORT             HTTP listen port (default: by NODE_ID)
   ADVERTISE_HOST   LAN IP for other machines (auto-detected if unset)
   REBENCHMARK=1    force re-run benchmark
+  VERIFY_MATERIALIZATION=1  verify layer store before worker GGUF assembly
   HF_TOKEN         Hugging Face token (faster downloads; or ~/.cache/huggingface/token)
 
 Options:
@@ -29,6 +30,7 @@ Options:
   --advertise-host IP
   --models-dir DIR
   --rebenchmark
+  --verify-materialization
   --build          build before run if binary missing (default)
   --no-build
   -h, --help
@@ -46,6 +48,7 @@ PORT="${PORT:-}"
 ADVERTISE_HOST="${ADVERTISE_HOST:-}"
 MODELS_DIR="${MODELS_DIR:-}"
 REBENCHMARK="${REBENCHMARK:-false}"
+VERIFY_MATERIALIZATION="${VERIFY_MATERIALIZATION:-false}"
 DO_BUILD=true
 
 while [[ $# -gt 0 ]]; do
@@ -57,6 +60,7 @@ while [[ $# -gt 0 ]]; do
     --advertise-host)  ADVERTISE_HOST="$2"; shift 2 ;;
     --models-dir)      MODELS_DIR="$2"; shift 2 ;;
     --rebenchmark)     REBENCHMARK=true; shift ;;
+    --verify-materialization) VERIFY_MATERIALIZATION=true; shift ;;
     --build)           DO_BUILD=true; shift ;;
     --no-build)        DO_BUILD=false; shift ;;
     -h|--help)         usage; exit 0 ;;
@@ -99,6 +103,10 @@ if [[ "$REBENCHMARK" == true || "$REBENCHMARK" == "1" ]]; then
   ARGS+=(--rebenchmark)
 fi
 
+if [[ "$VERIFY_MATERIALIZATION" == true || "$VERIFY_MATERIALIZATION" == "1" ]]; then
+  ARGS+=(--verify-materialization)
+fi
+
 echo "run-agent: node_id=$NODE_ID port=$PORT advertise=$ADVERTISE_HOST"
 echo "run-agent: orchestrator=$ORCHESTRATOR"
 if [[ -n "$MODEL" ]]; then
@@ -108,6 +116,9 @@ else
 fi
 if [[ -n "$MODELS_DIR" ]]; then
   echo "run-agent: models_dir=$MODELS_DIR"
+fi
+if [[ "$VERIFY_MATERIALIZATION" == true || "$VERIFY_MATERIALIZATION" == "1" ]]; then
+  echo "run-agent: verify_materialization=on"
 fi
 
 node_agent_wsl_portproxy_hint
