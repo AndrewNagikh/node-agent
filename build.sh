@@ -93,6 +93,12 @@ case "$BUILD_MODE" in
   all)
     TARGETS=(node_agent split_gen3_a split_gen3_b split_gen3_c orchestrator)
     ;;
+  verify)
+    TARGETS=(
+      gguf_inspect gguf_diff tensor_verify layer_verify
+      materialization_verify logits_compare hidden_state_compare
+    )
+    ;;
   orchestrator)
     TARGETS=(orchestrator)
     ;;
@@ -107,7 +113,7 @@ case "$BUILD_MODE" in
     )
     ;;
   *)
-    echo "usage: $0 [agents|orchestrator|all|e2e]" >&2
+    echo "usage: $0 [agents|orchestrator|all|verify|e2e]" >&2
     exit 1
     ;;
 esac
