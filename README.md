@@ -2,6 +2,30 @@
 
 Deploy package for running a **split inference node** on a remote machine.
 
+**Release v0.1** — architecture-agnostic distributed runtime, 6 model families, Docker 3-node E2E.
+
+## Supported architectures
+
+| Architecture | Статус | Partial Forward | Hidden Injection | Layer-first | Generate | Verification |
+|--------------|--------|-----------------|------------------|-------------|----------|--------------|
+| Llama | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Qwen | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Gemma | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Phi | 🟡 | ✅ | ✅ | ✅ | Sync | ✅ |
+| SmolLM | 🟡 | ✅ | ✅ | ✅ | Sync | ✅ |
+| DeepSeek-Qwen | 🟡 | Через Qwen | Через Qwen | ✅ | Sync | ✅ |
+
+Подробный реестр, модели E2E и инструкции: [docs/supported_architectures.md](docs/supported_architectures.md).
+
+```bash
+# Локальная verification suite (plugins + architecture report)
+./scripts/run_architecture_suite.sh
+
+# Docker E2E (3-node cluster)
+cd llama.cpp/tools/distributed/docker && docker compose up -d --build
+ORCHESTRATOR=http://127.0.0.1:9000 python3 run_e2e_generate.py
+```
+
 ## Quick start
 
 ```bash
@@ -63,4 +87,6 @@ curl -s http://192.168.50.154:9000/session/generate \
 
 ## Docs
 
-[llama.cpp/docs/task5_orchestrator.md](llama.cpp/docs/task5_orchestrator.md)
+- [Supported architectures](docs/supported_architectures.md)
+- [Task 9.9 runtime stabilization](llama.cpp/docs/task9_9_runtime_stabilization.md)
+- [Orchestrator](llama.cpp/docs/task5_orchestrator.md)

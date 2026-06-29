@@ -51,8 +51,29 @@ MODELS = [
         "label": "Gemma3",
         "model_id": "gemma-3-1b",
         "repository": "lmstudio-community/gemma-3-1b-it-GGUF",
-        "filename": "gemma-3-1b-it-q4_k_m.gguf",
+        "filename": "gemma-3-1b-it-Q4_K_M.gguf",
         "family": "gemma",
+    },
+    {
+        "label": "Phi3.5",
+        "model_id": "phi-3.5-mini",
+        "repository": "microsoft/Phi-3.5-mini-instruct-gguf",
+        "filename": "Phi-3.5-mini-instruct-q4.gguf",
+        "family": "phi",
+    },
+    {
+        "label": "SmolLM2",
+        "model_id": "smollm2-1.7b",
+        "repository": "HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF",
+        "filename": "SmolLM2-1.7B-Instruct-Q4_K_M.gguf",
+        "family": "smollm",
+    },
+    {
+        "label": "DeepSeekDistill",
+        "model_id": "deepseek-r1-distill-qwen-1.5b",
+        "repository": "unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF",
+        "filename": "DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf",
+        "family": "deepseek",
     },
 ]
 
