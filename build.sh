@@ -77,6 +77,11 @@ detect_gpu_cmake_args() {
     if has_cuda_toolkit; then
       GPU_CMAKE_EXTRA=(-DGGML_CUDA=ON)
       echo "build: NVIDIA GPU + CUDA toolkit → CUDA enabled"
+      if ! pkg-config --exists openssl 2>/dev/null && \
+         [[ ! -f /usr/include/openssl/ssl.h && ! -f /usr/local/include/openssl/ssl.h ]]; then
+        echo "build: libssl-dev not found — HTTPS downloads use curl fallback"
+        echo "build: (optional: sudo apt install libssl-dev curl, then rebuild)"
+      fi
     else
       echo "build: NVIDIA GPU detected but CUDA toolkit incomplete → CPU only"
       echo "build: (install cuda-toolkit, or force: GGML_CUDA=ON ./build.sh)"
