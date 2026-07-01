@@ -150,7 +150,26 @@ def model_status(model_id: str) -> dict:
     return out if status == 200 else {}
 
 
-def wait_job(job_id: str, timeout_s: int = 3600, poll_s: float = 1.0) -> tuple[bool, str]:
+def job_progress_line(job: dict) -> str:
+    nodes = job.get("nodes", {})
+    if not nodes:
+        return ""
+    parts = []
+    for nid, nd in sorted(nodes.items()):
+        if isinstance(nd, dict):
+            ready = nd.get("ready_count")
+            total = nd.get("total_count")
+            state = nd.get("state", nd.get("status", ""))
+            if ready is not None and total is not None:
+                parts.append(f"{nid}={ready}/{total}")
+            elif state:
+                parts.append(f"{nid}={state}")
+    return " ".join(parts)
+
+
+def wait_job(job_id: str, timeout_s: int | None = None, poll_s: float = 1.0) -> tuple[bool, str]:
+    if timeout_s is None:
+        timeout_s = int(os.environ.get("SYNC_JOB_TIMEOUT_S", "1800"))
     log(f"  ... waiting for sync job {job_id} (timeout {timeout_s}s)")
     deadline = time.time() + timeout_s
     last_line = ""
@@ -158,11 +177,9 @@ def wait_job(job_id: str, timeout_s: int = 3600, poll_s: float = 1.0) -> tuple[b
         status, job = http("GET", f"/jobs/{job_id}", timeout=30)
         if status == 200:
             state = job.get("state", "")
-            progress = job.get("progress", job.get("completed_operations", ""))
-            ready = job.get("ready_count", "")
-            total = job.get("total_count", "")
-            extra = f" {ready}/{total}" if ready != "" and total != "" else ""
-            line = f"  ... job state={state} progress={progress}{extra}"
+            progress = job_progress_line(job)
+            extra = f" {progress}" if progress else ""
+            line = f"  ... job state={state}{extra}"
             if line != last_line:
                 log(line)
                 last_line = line
@@ -374,7 +391,7 @@ def test_model(cfg: dict, skip_sync: bool = False, fast: bool = False) -> ModelR
             if status != 200 or not job_id:
                 result.steps.append(step("install-sync", False, json.dumps(out)))
                 return result
-            ok, err = wait_job(job_id, timeout_s=3600)
+            ok, err = wait_job(job_id)
             result.steps.append(step("install-sync", ok, err))
 
         status, out = http("POST", f"/models/{mid}/coverage/refresh", {}, timeout=120)
