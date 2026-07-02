@@ -121,8 +121,14 @@ case "$BUILD_MODE" in
       test-cluster-e2e-node-loss test-cluster-e2e-orchestrator-restart
     )
     ;;
+  benchmark)
+    echo "build: benchmark suite is Python-only (no compile)"
+    echo "  ORCHESTRATOR=\${ORCHESTRATOR:-http://127.0.0.1:9000} ./scripts/run_cluster_benchmark.sh"
+    echo "  python3 benchmarks/benchmark_runner.py --profile ci"
+    exit 0
+    ;;
   *)
-    echo "usage: $0 [agents|orchestrator|all|verify|e2e]" >&2
+    echo "usage: $0 [agents|orchestrator|all|verify|e2e|benchmark]" >&2
     exit 1
     ;;
 esac

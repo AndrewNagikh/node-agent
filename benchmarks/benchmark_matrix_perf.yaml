@@ -1,0 +1,126 @@
+# Task 10.1 — Monolithic vs Distributed performance matrix
+
+defaults:
+  n_ctx: 512
+  sync_timeout_s: 1800
+  sync_max_rounds: 8
+  wait_cluster_timeout_s: 120
+  repeats: 5
+  sample_interval_ms: 100
+  warmup_tokens: 1
+  generate_timeout_s: 180
+  mono_ngl: 99
+  reset_before_run: false
+  prompt_category: short
+  regression_threshold_pct: 10
+
+profiles:
+  # Full scientific matrix (long run)
+  perf:
+    mode: perf
+    models:
+      - tinyllama
+      - llama3_1b
+      - qwen2_1_5b
+      - qwen8b
+    cluster_sizes:
+      - mono
+      - 1
+      - 2
+      - 3
+      - 4
+    prompt_categories:
+      - short
+      - medium
+    prompt_lengths:
+      - 16
+      - 128
+    generate_tokens:
+      - 16
+      - 32
+    repeats: 5
+    modes:
+      - cold
+      - warm
+
+  # Quick smoke for development
+  perf_smoke:
+    mode: perf
+    models:
+      - tinyllama
+    cluster_sizes:
+      - mono
+      - 3
+    prompt_categories:
+      - short
+    prompt_lengths:
+      - 16
+    generate_tokens:
+      - 16
+    repeats: 2
+    modes:
+      - warm
+
+  # Cold start overhead (install + sync + runtime)
+  cold:
+    mode: cold
+    models:
+      - tinyllama
+      - llama3_1b
+      - qwen2_1_5b
+    cluster_sizes:
+      - 3
+    prompt_categories:
+      - short
+    prompt_lengths:
+      - 16
+    generate_tokens:
+      - 16
+    repeats: 3
+    reset_before_run: true
+    modes:
+      - cold
+
+  # Warm runtime only (layer store ready)
+  warm:
+    mode: warm
+    models:
+      - tinyllama
+      - llama3_1b
+      - qwen2_1_5b
+    cluster_sizes:
+      - 3
+    prompt_categories:
+      - short
+    prompt_lengths:
+      - 16
+    generate_tokens:
+      - 16
+    repeats: 5
+    reset_before_run: false
+    warmup_tokens: 0
+    prefill_probe: false
+    modes:
+      - warm
+
+  # Scaling efficiency study
+  scaling:
+    mode: scaling
+    models:
+      - tinyllama
+    cluster_sizes:
+      - mono
+      - 1
+      - 2
+      - 3
+      - 4
+    prompt_categories:
+      - short
+    prompt_lengths:
+      - 16
+    generate_tokens:
+      - 16
+    repeats: 3
+    reset_before_run: false
+    modes:
+      - warm

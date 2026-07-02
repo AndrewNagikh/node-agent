@@ -1,0 +1,2 @@
+# Cluster Benchmark Suite — optional dependency (built-in YAML parser works without it)
+PyYAML>=6.0

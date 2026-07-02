@@ -1,0 +1,100 @@
+# Benchmark matrix — profiles select model keys, cluster sizes, prompts, tokens.
+# Runner expands the Cartesian product (unless mode overrides expansion).
+
+defaults:
+  n_ctx: 512
+  sync_timeout_s: 1800
+  sync_max_rounds: 8
+  reset_before_run: true
+  warmup_tokens: 4
+  base_prompt: "The capital of France is"
+  wait_cluster_timeout_s: 120
+
+profiles:
+  # Full matrix (local / nightly)
+  default:
+    models:
+      - tinyllama
+    cluster_sizes:
+      - 3
+    prompt_lengths:
+      - 16
+      - 128
+      - 512
+    generate_tokens:
+      - 32
+      - 128
+
+  # CI: TinyLlama + Llama 3.2 + Qwen 2.5 on 3-node cluster
+  ci:
+    models:
+      - tinyllama
+      - llama3_1b
+      - qwen2_1_5b
+    cluster_sizes:
+      - 3
+    prompt_lengths:
+      - 16
+    generate_tokens:
+      - 16
+    reset_before_run: true
+    warmup_tokens: 0
+
+  # Scaling study — run with 2/3/4/5 nodes online; tags each run by observed size
+  scaling:
+    mode: scaling
+    models:
+      - tinyllama
+    cluster_sizes:
+      - 2
+      - 3
+      - 4
+      - 5
+    prompt_lengths:
+      - 128
+    generate_tokens:
+      - 64
+
+  # Large models — stops after layout when fits_cluster=false
+  large:
+    mode: large
+    models:
+      - qwen8b
+      - qwen14b
+      - qwen30b
+      - gemma27b
+    cluster_sizes:
+      - 3
+    prompt_lengths:
+      - 16
+    generate_tokens:
+      - 32
+    stop_if_not_fits: true
+
+  # Stress — repeated generate (reduce requests in CI via env BENCHMARK_STRESS_REQUESTS)
+  stress:
+    mode: stress
+    models:
+      - tinyllama
+    cluster_sizes:
+      - 3
+    prompt_lengths:
+      - 16
+    generate_tokens:
+      - 32
+    stress_requests: 1000
+    stress_warmup: 5
+
+  # Fault injection — shutdown one node mid-sync or mid-generate
+  fault:
+    mode: fault
+    models:
+      - tinyllama
+    cluster_sizes:
+      - 3
+    prompt_lengths:
+      - 16
+    generate_tokens:
+      - 32
+    fault_node: node-c
+    fault_stage: synchronization

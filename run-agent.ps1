@@ -10,6 +10,7 @@ param(
     [string]$NodeId = "node-c",
     [string]$Orchestrator = $env:ORCHESTRATOR,
     [string]$AdvertiseHost = $env:ADVERTISE_HOST,
+    [string]$ModelsDir = $env:MODELS_DIR,
     [int]$Port = 0,
     [switch]$Build,
     [switch]$Cuda,
@@ -19,11 +20,57 @@ param(
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$BinDir = Join-Path $Root "llama.cpp\build\bin\Release"
-$Bin = Join-Path $BinDir "node_agent.exe"
-if (-not (Test-Path $Bin)) {
-    $BinDir = Join-Path $Root "llama.cpp\build\bin"
-    $Bin = Join-Path $BinDir "node_agent.exe"
+$NinjaBin = Join-Path $Root "llama.cpp\build\bin\node_agent.exe"
+$MsvcBin = Join-Path $Root "llama.cpp\build\bin\Release\node_agent.exe"
+if (Test-Path $NinjaBin) {
+    $BinDir = Split-Path $NinjaBin -Parent
+    $Bin = $NinjaBin
+} elseif (Test-Path $MsvcBin) {
+    $BinDir = Split-Path $MsvcBin -Parent
+    $Bin = $MsvcBin
+} else {
+    throw "node_agent.exe not found - run .\build.ps1 agents or scripts\build-native.cmd"
+}
+
+function Load-EnvFile {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { return }
+    Get-Content $Path | ForEach-Object {
+        $line = $_.Trim()
+        if (-not $line -or $line.StartsWith('#')) { return }
+        $eq = $line.IndexOf('=')
+        if ($eq -lt 1) { return }
+        $key = $line.Substring(0, $eq).Trim()
+        $val = $line.Substring($eq + 1).Trim().Trim('"').Trim("'")
+        if ($key -eq 'HF_TOKEN' -and $val) {
+            $env:HF_TOKEN = $val
+            Write-Host "run-agent: loaded HF_TOKEN from $Path"
+        }
+    }
+}
+
+function Ensure-CudaPath {
+    param([string]$AgentDir)
+    if (-not (Test-Path (Join-Path $AgentDir "ggml-cuda.dll"))) { return }
+    $toolkit = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA"
+    if (-not (Test-Path $toolkit)) { return }
+    $runtimeDir = Get-ChildItem $toolkit -Directory |
+        Sort-Object Name -Descending |
+        ForEach-Object {
+            $x64 = Join-Path $_.FullName "bin\x64"
+            if (Test-Path (Join-Path $x64 "cudart64_*.dll")) { return $x64 }
+        } | Select-Object -First 1
+    if ($runtimeDir) {
+        $env:PATH = "$runtimeDir;$env:PATH"
+        Write-Host "run-agent: CUDA runtime in PATH ($runtimeDir)"
+    }
+}
+
+function Ensure-SystemPath {
+    $system32 = Join-Path $env:WINDIR "System32"
+    if ((Test-Path $system32) -and ($env:PATH -notlike "*$system32*")) {
+        $env:PATH = "$system32;$env:PATH"
+    }
 }
 
 function Ensure-FirewallRules {
@@ -71,19 +118,30 @@ if (-not $AdvertiseHost) {
         Select-Object -First 1).IPAddress
 }
 if (-not $AdvertiseHost) {
-    throw "could not detect LAN IP — set ADVERTISE_HOST"
+    throw "could not detect LAN IP - set ADVERTISE_HOST"
 }
 
 # Workers must sit next to node_agent.exe
 foreach ($w in @("split_gen3_a", "split_gen3_b", "split_gen3_c")) {
     $wp = Join-Path $BinDir "$w.exe"
     if (-not (Test-Path $wp)) {
-        throw "missing worker $wp — run .\build.ps1 agents"
+        throw "missing worker $wp - run .\build.ps1 agents"
     }
 }
+
+Load-EnvFile -Path (Join-Path $Root ".env")
+
+if (-not $ModelsDir) {
+    $ModelsDir = Join-Path $env:USERPROFILE ".distributed-llm\models"
+}
+New-Item -ItemType Directory -Force -Path $ModelsDir | Out-Null
+Write-Host "run-agent: models_dir=$ModelsDir"
 
 Write-Host "run-agent: node=$NodeId port=$Port advertise=$AdvertiseHost orchestrator=$Orchestrator"
 Write-Host "verify: curl http://${AdvertiseHost}:$Port/health"
 
+Ensure-CudaPath -AgentDir $BinDir
+Ensure-SystemPath
+
 & $Bin --listen "0.0.0.0:$Port" --advertise-host $AdvertiseHost `
-    --orchestrator $Orchestrator --node-id $NodeId
+    --orchestrator $Orchestrator --node-id $NodeId --models-dir $ModelsDir

@@ -27,7 +27,7 @@ function Ensure-Command($name, $installHint) {
 function Install-Deps {
     if ($SkipDeps) { return }
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-        Write-Info "winget missing — install Git, CMake, VS 2022 Build Tools manually"
+        Write-Info "winget missing - install Git, CMake, VS 2022 Build Tools manually"
         return
     }
     $packages = @(
@@ -90,4 +90,4 @@ foreach ($t in $targets) {
     Write-Host "  $exe"
 }
 Write-Host ""
-Write-Host "Start node-c: .\run-agent.ps1 -NodeId node-c -Build:`$false"
+Write-Host 'Start node-c: .\run-agent.ps1 -NodeId node-c -Build:$false'

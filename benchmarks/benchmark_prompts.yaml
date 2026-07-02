@@ -1,0 +1,51 @@
+# Prompt dataset for Task 10.1 performance benchmarks.
+# Runner picks prompts by category; lengths are approximate token targets.
+
+categories:
+  short:
+    label: Short factual
+    prompts:
+      - "The capital of France is"
+      - "Two plus two equals"
+      - "Water boils at"
+
+  medium:
+    label: Medium context
+    prompts:
+      - "Summarize the key ideas of the French Revolution in three sentences."
+      - "Explain how a binary search tree works."
+      - "Describe the difference between RAM and VRAM."
+
+  long:
+    label: Long context
+    prompts:
+      - "Write a detailed essay outline about distributed systems covering consistency, availability, partition tolerance, replication, sharding, and load balancing."
+      - "Explain the history of computing from mechanical calculators to modern GPUs in several paragraphs."
+
+  code:
+    label: Code generation
+    prompts:
+      - "Write quicksort in Python with comments."
+      - "Implement a thread-safe queue in Rust."
+      - "Write a SQL query to find duplicate emails."
+
+  reasoning:
+    label: Reasoning
+    prompts:
+      - "If all cats are mammals and some mammals are pets, can we conclude all cats are pets? Explain."
+      - "A train travels 120 km in 2 hours. How long for 300 km at the same speed?"
+
+  chat:
+    label: Chat / translation
+    prompts:
+      - "Translate to French: Hello, how are you today?"
+      - "You are a helpful assistant. Recommend three books about machine learning."
+
+# Semantic checks for quality (first-token / prefix equivalence)
+quality_expectations:
+  "The capital of France is":
+    must_contain: ["Paris", "paris"]
+  "Two plus two equals":
+    must_contain: ["4", "four", "Four"]
+  "Write quicksort in Python with comments.":
+    must_contain: ["def", "sort", "python", "Python"]
