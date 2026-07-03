@@ -771,7 +771,7 @@ def expand_matrix(profile: dict[str, Any], models_catalog: dict[str, Any],
     return rows
 
 
-PERF_PROFILES = frozenset({"perf", "perf_smoke", "smoke", "quick", "cold", "warm", "scaling"})
+PERF_PROFILES = frozenset({"perf", "perf_smoke", "smoke", "quick", "cold", "warm", "warm_ext", "scaling"})
 PERF_MODES = frozenset({"cold", "warm", "scaling", "perf", "runtime-only", "smoke", "quick"})
 
 

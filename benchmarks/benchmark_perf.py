@@ -155,6 +155,32 @@ def _timed_generate(
     }
 
 
+def orchestrator_rss_sample(stage: str) -> dict[str, Any]:
+    """Sample orchestrator control-plane RSS (requires /debug/rss on rebuilt orchestrator)."""
+    st, out = br.http("GET", "/debug/rss", timeout=5)
+    if st != 200 or not isinstance(out, dict):
+        return {"stage": stage, "error": f"http_{st}"}
+    return {
+        "stage": stage,
+        "rss_bytes": out.get("rss_bytes"),
+        "rss_mb": out.get("rss_mb"),
+        "baseline_delta_mb": out.get("baseline_delta_mb"),
+    }
+
+
+def summarize_orchestrator_rss(samples: list[dict[str, Any]]) -> dict[str, Any]:
+    mbs = [s["rss_mb"] for s in samples if isinstance(s.get("rss_mb"), (int, float))]
+    deltas = [s["baseline_delta_mb"] for s in samples if isinstance(s.get("baseline_delta_mb"), (int, float))]
+    if not mbs:
+        return {"samples": samples}
+    return {
+        "samples": samples,
+        "peak_rss_mb": max(mbs),
+        "avg_rss_mb": round(sum(mbs) / len(mbs), 2),
+        "peak_baseline_delta_mb": max(deltas) if deltas else None,
+    }
+
+
 def run_phase_a_infra(
     model_cfg: dict[str, Any],
     profile: dict[str, Any],
@@ -185,6 +211,7 @@ def run_phase_a_infra(
         return infra
 
     t_total0 = time.perf_counter()
+    rss_samples: list[dict[str, Any]] = [orchestrator_rss_sample("phase_a_start")]
 
     if cold or profile.get("reset_before_run", False):
         t0 = time.perf_counter()
@@ -207,14 +234,17 @@ def run_phase_a_infra(
         "revision": model_cfg.get("revision", "main"),
     }, timeout=120)
     infra["stages"]["register_ms"] = round((time.perf_counter() - t0) * 1000, 2)
+    rss_samples.append(orchestrator_rss_sample("register"))
 
     t0 = time.perf_counter()
     st_disc, _ = br.http("POST", f"/models/{mid}/discover", {}, timeout=180)
     infra["stages"]["discovery_ms"] = round((time.perf_counter() - t0) * 1000, 2)
+    rss_samples.append(orchestrator_rss_sample("discover"))
 
     t0 = time.perf_counter()
     st_man, _ = br.http("POST", f"/models/{mid}/manifest", {}, timeout=180)
     infra["stages"]["manifest_ms"] = round((time.perf_counter() - t0) * 1000, 2)
+    rss_samples.append(orchestrator_rss_sample("manifest"))
 
     t0 = time.perf_counter()
     st_lay, layout = br.http("POST", f"/models/{mid}/layout", {"force": True}, timeout=120)
@@ -222,10 +252,12 @@ def run_phase_a_infra(
     infra["stages"]["planner_ms"] = round(planner_ms, 2)
     infra["planner_ms"] = round(planner_ms, 2)
     infra["fits_cluster"] = layout.get("fits_cluster") if st_lay == 200 else None
+    rss_samples.append(orchestrator_rss_sample("layout"))
 
     t0 = time.perf_counter()
     br.http("POST", f"/models/{mid}/install-plan", {}, timeout=120)
     infra["stages"]["install_plan_ms"] = round((time.perf_counter() - t0) * 1000, 2)
+    rss_samples.append(orchestrator_rss_sample("install_plan"))
 
     sync_rec, cov_rec = br.run_sync_loop(mid, profile, traces_dir, None)
     infra["stages"]["synchronization_ms"] = sync_rec.duration_ms
@@ -233,12 +265,14 @@ def run_phase_a_infra(
     infra["install_ms"] = sync_rec.duration_ms
     infra["sync"] = sync_rec.metrics
     infra["coverage"] = cov_rec.metrics
+    rss_samples.append(orchestrator_rss_sample("sync"))
 
     t0 = time.perf_counter()
     mat = br.run_materialization(mid, cluster)
     infra["stages"]["materialization_ms"] = mat.duration_ms
     infra["materialization_ms"] = mat.duration_ms
     infra["materialization"] = mat.metrics
+    rss_samples.append(orchestrator_rss_sample("materialization"))
 
     t_sess0 = time.perf_counter()
     st_sess, sess = br.http("POST", "/session/create", {"model": mid, "n_ctx": n_ctx}, timeout=300)
@@ -252,6 +286,8 @@ def run_phase_a_infra(
     infra["session_id"] = session_id
     infra["pipeline"] = pipeline
     infra["pipeline_nodes"] = len(pipeline)
+    rss_samples.append(orchestrator_rss_sample("session_create"))
+    infra["orchestrator_rss"] = summarize_orchestrator_rss(rss_samples)
     infra["total_ms"] = round((time.perf_counter() - t_total0) * 1000, 2)
     infra["http_status"] = {
         "register": st_reg,

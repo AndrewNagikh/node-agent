@@ -67,6 +67,32 @@ profiles:
     reset_before_run: false
     persistent_session: true
 
+  # Extended catalog — remaining models (merge with warm run for full report)
+  warm_ext:
+    mode: warm
+    models:
+      - gemma3_1b
+      - qwen8b
+      - phi3_5
+      - smollm2_1_7b
+      - deepseek_qwen_1_5b
+      - qwen14b
+      - qwen30b
+      - gemma27b
+    cluster_sizes:
+      - 3
+    prompt_profiles:
+      - short
+      - medium
+      - long
+      - chat
+      - code
+      - reasoning
+    generations: 20
+    reset_before_run: false
+    persistent_session: true
+    stop_if_not_fits: true
+
   # Runtime only — existing layers ready, measure generate path
   runtime-only:
     mode: runtime-only
