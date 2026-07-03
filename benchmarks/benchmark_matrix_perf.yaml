@@ -1,24 +1,110 @@
-# Task 10.1.1 — Persistent-session performance matrix
+# Task 10.1.2 — Model-centric persistent-session performance matrix
 
 defaults:
-  n_ctx: 512
+  n_ctx: 2048
   sync_timeout_s: 1800
   sync_max_rounds: 8
   wait_cluster_timeout_s: 120
-  sample_interval_ms: 100
-  generate_timeout_s: 180
+  sample_interval_ms: 200
+  generate_timeout_s: 300
   mono_ngl: 99
   reset_before_run: false
   prompt_category: short
   regression_threshold_pct: 10
-  # Persistent session benchmark (10.1.1)
   persistent_session: true
   generations: 20
   warmup: true
+  warmup_prompt: "Hello"
   warmup_tokens: 4
-  prefill_probe: false
+  generate_tokens: 16
 
 profiles:
+  # Fast verification — 1 model, 2 prompts, 3 generates (~5 min)
+  smoke:
+    mode: warm
+    models:
+      - tinyllama
+    cluster_sizes:
+      - 3
+    prompt_profiles:
+      - short
+      - medium
+    generations: 3
+    persistent_session: true
+
+  # Quick comparison — 3 models, 2 prompts, 5 generates (~20-30 min)
+  quick:
+    mode: warm
+    models:
+      - tinyllama
+      - llama3_1b
+      - qwen2_1_5b
+    cluster_sizes:
+      - 3
+    prompt_profiles:
+      - short
+      - medium
+    generations: 5
+    persistent_session: true
+
+  # Full warm — all models, all prompt profiles, 20 generates
+  warm:
+    mode: warm
+    models:
+      - tinyllama
+      - llama3_1b
+      - qwen2_1_5b
+    cluster_sizes:
+      - 3
+    prompt_profiles:
+      - short
+      - medium
+      - long
+      - chat
+      - code
+      - reasoning
+    generations: 20
+    reset_before_run: false
+    persistent_session: true
+
+  # Runtime only — existing layers ready, measure generate path
+  runtime-only:
+    mode: runtime-only
+    models:
+      - tinyllama
+    cluster_sizes:
+      - 3
+    prompt_profiles:
+      - short
+      - medium
+    generations: 5
+    persistent_session: true
+
+  # Cold — full reset + install per model
+  cold:
+    mode: cold
+    models:
+      - tinyllama
+    cluster_sizes:
+      - 3
+    prompt_profiles:
+      - short
+    generations: 5
+    reset_before_run: true
+    persistent_session: true
+
+  # Legacy smoke alias
+  perf_smoke:
+    mode: warm
+    models:
+      - tinyllama
+    cluster_sizes:
+      - 3
+    prompt_profiles:
+      - short
+    generations: 5
+    persistent_session: true
+
   # Full scientific matrix (long run)
   perf:
     mode: perf
@@ -45,64 +131,6 @@ profiles:
       - cold
       - warm
 
-  # Quick smoke for development
-  perf_smoke:
-    mode: perf
-    models:
-      - tinyllama
-    cluster_sizes:
-      - mono
-      - 3
-    prompt_profiles:
-      - short
-    generate_tokens:
-      - 16
-    generations: 5
-    persistent_session: true
-    modes:
-      - warm
-
-  # Cold start overhead (install + sync + runtime)
-  cold:
-    mode: cold
-    models:
-      - tinyllama
-      - llama3_1b
-      - qwen2_1_5b
-    cluster_sizes:
-      - 3
-    prompt_profiles:
-      - short
-    generate_tokens:
-      - 16
-    generations: 10
-    reset_before_run: true
-    persistent_session: true
-    modes:
-      - cold
-
-  # Warm runtime only (layer store ready)
-  warm:
-    mode: warm
-    models:
-      - tinyllama
-      - llama3_1b
-      - qwen2_1_5b
-    cluster_sizes:
-      - 3
-    prompt_profiles:
-      - short
-    generate_tokens:
-      - 16
-    generations: 20
-    reset_before_run: false
-    warmup_tokens: 0
-    prefill_probe: false
-    persistent_session: true
-    modes:
-      - warm
-
-  # Scaling efficiency study
   scaling:
     mode: scaling
     models:
@@ -115,10 +143,5 @@ profiles:
       - 4
     prompt_profiles:
       - short
-    generate_tokens:
-      - 16
     generations: 15
-    reset_before_run: false
     persistent_session: true
-    modes:
-      - warm

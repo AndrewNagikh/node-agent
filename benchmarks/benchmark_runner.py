@@ -771,8 +771,8 @@ def expand_matrix(profile: dict[str, Any], models_catalog: dict[str, Any],
     return rows
 
 
-PERF_PROFILES = frozenset({"perf", "perf_smoke", "cold", "warm", "scaling"})
-PERF_MODES = frozenset({"cold", "warm", "scaling", "perf"})
+PERF_PROFILES = frozenset({"perf", "perf_smoke", "smoke", "quick", "cold", "warm", "scaling"})
+PERF_MODES = frozenset({"cold", "warm", "scaling", "perf", "runtime-only", "smoke", "quick"})
 
 
 def is_perf_run(profile_name: str, mode: str) -> bool:
@@ -803,18 +803,22 @@ def run_perf_main(args: argparse.Namespace) -> int:
     opts = PerfOptions(
         persistent_session=persistent,
         warmup=warmup,
-        runtime_only=getattr(args, "runtime_only", False),
+        runtime_only=getattr(args, "runtime_only", False) or profile_name == "runtime-only",
         infra_only=getattr(args, "infra_only", False),
         generations=getattr(args, "generations", None),
         prompt_profile=getattr(args, "prompt_profile", None),
+        verify_session=not getattr(args, "no_verify", False),
+        resume=getattr(args, "resume", False),
     )
 
     load_hf_token()
     run_id = make_run_id()
     out_dir = Path(args.output_dir) if args.output_dir else default_output_dir(run_id)
+    if opts.resume and getattr(args, "resume_dir", None):
+        out_dir = Path(args.resume_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    log(f"Performance Benchmark 10.1.1 — profile={profile_name} mode={mode}")
+    log(f"Performance Benchmark 10.1.2 — profile={profile_name} mode={mode}")
     log(f"  persistent_session={opts.persistent_session} generations={opts.generations or profile.get('generations', 20)}")
     if opts.runtime_only:
         log("  runtime_only=True (skip full infra pipeline)")
@@ -873,6 +877,9 @@ def main() -> int:
                         help="Number of generate calls per session (default: profile generations)")
     parser.add_argument("--prompt-profile", choices=["short", "medium", "long", "code", "chat", "reasoning"],
                         default=None, help="Prompt profile (YAML-defined categories)")
+    parser.add_argument("--resume", action="store_true", help="Resume from checkpoint in output dir")
+    parser.add_argument("--resume-dir", help="Checkpoint directory for --resume")
+    parser.add_argument("--no-verify", action="store_true", help="Disable session reuse verification")
     args = parser.parse_args()
 
     models_doc = load_yaml_file(BENCH_DIR / "benchmark_models.yaml")

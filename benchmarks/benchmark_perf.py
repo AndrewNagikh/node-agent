@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Task 10.1.1 — Persistent-session performance benchmark (Phase A infra + Phase B runtime)."""
+"""Task 10.1.2 — Model-centric persistent-session benchmark framework."""
 
 from __future__ import annotations
 
@@ -45,6 +45,8 @@ class PerfOptions:
     infra_only: bool = False
     generations: int | None = None
     prompt_profile: str | None = None
+    verify_session: bool = True
+    resume: bool = False
 
 
 def utc_now() -> str:
@@ -828,9 +830,17 @@ def run_perf_suite(
     log: Callable[[str], None] = print,
     opts: PerfOptions | None = None,
 ) -> dict[str, Any]:
+    from benchmark_model import (
+        PROMPT_PROFILE_ORDER,
+        Checkpoint,
+        model_result_to_scenarios,
+        run_model_benchmark,
+    )
+
     opts = opts or PerfOptions()
     traces_dir = out_dir / "traces"
     traces_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint = Checkpoint(out_dir / "checkpoint.json")
 
     min_nodes = 1
     sizes = profile.get("cluster_sizes", [3])
@@ -842,26 +852,63 @@ def run_perf_suite(
         log(f"Cluster has {cluster.get('node_count', 0)} nodes (need >={min_nodes})")
         return {"error": "insufficient nodes", "cluster": cluster}
 
-    rows = expand_perf_matrix(profile, models_catalog, model_filter)
-    if cluster_size_filter is not None:
-        rows = [r for r in rows if str(r["cluster_size_target"]) == str(cluster_size_filter)]
+    model_keys = profile.get("models", [])
+    if model_filter:
+        model_keys = [k for k in model_keys if k == model_filter or models_catalog.get(k, {}).get("model_id") == model_filter]
 
+    prompt_profiles = [opts.prompt_profile] if opts.prompt_profile else list(
+        profile.get("prompt_profiles") or profile.get("prompt_categories", ["short"])
+    )
+    prompt_profiles = [p for p in PROMPT_PROFILE_ORDER if p in prompt_profiles] + [
+        p for p in prompt_profiles if p not in PROMPT_PROFILE_ORDER
+    ]
+
+    profile = {**profile, "cluster_size_target": cluster_size_filter or (sizes[0] if sizes else 3)}
+
+    if opts.resume:
+        log("Resume status:")
+        for row in checkpoint.model_status(model_keys):
+            log(f"  {row['model_key']}: {row['status']}")
+
+    model_results: list[dict[str, Any]] = []
     scenarios: list[dict[str, Any]] = []
-    mono_baselines: dict[str, dict[str, Any]] = {}
 
-    for row in rows:
-        mk = row["model_key"]
+    for mk in model_keys:
+        if mk not in models_catalog:
+            continue
+        if opts.resume and checkpoint.is_done(mk):
+            cached = checkpoint.data.get("models", {}).get(mk)
+            if cached:
+                model_results.append(cached)
+                scenarios.extend(model_result_to_scenarios(cached, run_id))
+            log(f"Skipping {mk} (checkpoint PASS)")
+            continue
+
         cfg = models_catalog[mk]
-        run_mode = row.get("run_mode", mode if mode in ("cold", "warm") else "warm")
         cluster = br.fetch_cluster_snapshot()
-        try:
-            sc = run_perf_scenario(mk, cfg, row, profile, run_mode, run_id, traces_dir, cluster, log, opts)
-        except Exception as exc:  # noqa: BLE001
-            sc = {"scenario_id": f"{mk}_error", "error": str(exc), "model_key": mk}
-        scenarios.append(sc)
-        if sc.get("cluster_size_target") == "mono" and sc.get("aggregate"):
-            mono_baselines[mk] = sc
+        run_mode = mode if mode in ("cold", "warm", "runtime-only") else profile.get("mode", "warm")
+        if profile.get("reset_before_run"):
+            run_mode = "cold"
 
+        try:
+            mr = run_model_benchmark(
+                mk, cfg, profile, prompt_profiles, cluster, traces_dir, out_dir,
+                run_mode, opts, log,
+                phase_a_fn=run_phase_a_infra,
+                rotate_prompts_fn=rotate_prompts,
+                resolve_len_fn=resolve_prompt_length,
+            )
+        except Exception as exc:  # noqa: BLE001
+            mr = {"model_key": mk, "error": str(exc)}
+        model_results.append(mr)
+        scenarios.extend(model_result_to_scenarios(mr, run_id))
+        if not mr.get("error"):
+            checkpoint.save_model(mk, mr)
+
+    mono_baselines: dict[str, dict[str, Any]] = {}
+    for sc in scenarios:
+        if sc.get("cluster_size_target") == "mono" and sc.get("aggregate"):
+            mono_baselines[sc.get("model_key", "")] = sc
     for sc in scenarios:
         mk = sc.get("model_key", "")
         if mk in mono_baselines and sc.get("cluster_size_target") != "mono":
@@ -870,9 +917,15 @@ def run_perf_suite(
     comparison = build_comparison_table(scenarios)
     scaling = compute_scaling_table(scenarios)
     summary = build_document_summary(scenarios)
+    summary["checkpoint"] = checkpoint.model_status(model_keys)
+    summary["session_verification_failures"] = [
+        f"{mr.get('model_key')}: {f}"
+        for mr in model_results
+        for f in mr.get("session_verification", {}).get("failures", [])
+    ]
 
     return {
-        "benchmark_version": "10.1.1",
+        "benchmark_version": "10.1.2",
         "run_id": run_id,
         "profile": profile_name,
         "mode": mode,
@@ -883,10 +936,14 @@ def run_perf_suite(
             "infra_only": opts.infra_only,
             "generations": opts.generations or profile.get("generations", 20),
             "prompt_profile": opts.prompt_profile,
+            "verify_session": opts.verify_session,
+            "resume": opts.resume,
+            "prompt_profiles": prompt_profiles,
         },
         "orchestrator": br.ORCH,
         "cluster": cluster,
         "software": __import__("benchmark_export").collect_git_metadata(),
+        "model_results": model_results,
         "scenarios": scenarios,
         "infrastructure": summary["infrastructure"],
         "runtime": summary["runtime"],
