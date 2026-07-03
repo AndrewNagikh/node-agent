@@ -4,6 +4,7 @@
 categories:
   short:
     label: Short factual
+    target_tokens: 16
     prompts:
       - "The capital of France is"
       - "Two plus two equals"
@@ -11,6 +12,7 @@ categories:
 
   medium:
     label: Medium context
+    target_tokens: 128
     prompts:
       - "Summarize the key ideas of the French Revolution in three sentences."
       - "Explain how a binary search tree works."
@@ -18,12 +20,14 @@ categories:
 
   long:
     label: Long context
+    target_tokens: 1024
     prompts:
       - "Write a detailed essay outline about distributed systems covering consistency, availability, partition tolerance, replication, sharding, and load balancing."
       - "Explain the history of computing from mechanical calculators to modern GPUs in several paragraphs."
 
   code:
     label: Code generation
+    target_tokens: 128
     prompts:
       - "Write quicksort in Python with comments."
       - "Implement a thread-safe queue in Rust."
@@ -31,12 +35,14 @@ categories:
 
   reasoning:
     label: Reasoning
+    target_tokens: 256
     prompts:
       - "If all cats are mammals and some mammals are pets, can we conclude all cats are pets? Explain."
       - "A train travels 120 km in 2 hours. How long for 300 km at the same speed?"
 
   chat:
     label: Chat / translation
+    target_tokens: 64
     prompts:
       - "Translate to French: Hello, how are you today?"
       - "You are a helpful assistant. Recommend three books about machine learning."

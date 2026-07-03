@@ -88,13 +88,33 @@ def agg_mean(sc: dict[str, Any], key: str) -> float | None:
     return None
 
 
+def infra_metric(sc: dict[str, Any], key: str) -> float | None:
+    infra = sc.get("infrastructure", {})
+    if key == "planner":
+        v = infra.get("planner_ms") or infra.get("stages", {}).get("planner_ms")
+    elif key == "session_create":
+        v = infra.get("session_create_ms")
+    elif key == "materialization":
+        v = infra.get("materialization_ms")
+    elif key == "install":
+        v = infra.get("install_ms")
+    else:
+        v = None
+    return float(v) if isinstance(v, (int, float)) else None
+
+
 def compare_runs(run_a: dict[str, Any], run_b: dict[str, Any], regression_threshold_pct: float = 10.0) -> dict[str, Any]:
-    is_perf = run_a.get("benchmark_version") == "10.1" or run_b.get("benchmark_version") == "10.1"
+    is_perf = run_a.get("benchmark_version", "").startswith("10.1") or run_b.get("benchmark_version", "").startswith("10.1")
     idx_a = index_scenarios(run_a)
     idx_b = index_scenarios(run_b)
     keys = sorted(set(idx_a) | set(idx_b))
     scenario_diffs = []
     regressions: list[dict[str, Any]] = []
+    infra_regressions: list[dict[str, Any]] = []
+    runtime_regressions: list[dict[str, Any]] = []
+
+    INFRA_METRICS = ("Planner", "Session Create", "Materialization", "Install (cold)")
+    RUNTIME_METRICS = ("TTFT", "Decode TPS", "Prefill TPS", "ms/token", "Jitter")
 
     for key in keys:
         a, b = idx_a.get(key), idx_b.get(key)
@@ -102,6 +122,10 @@ def compare_runs(run_a: dict[str, Any], run_b: dict[str, Any], regression_thresh
             scenario_diffs.append({"scenario_id": key, "missing": "a" if not a else "b"})
             continue
         if is_perf:
+            runtime_agg_a = a.get("runtime", {}).get("aggregate", {})
+            runtime_agg_b = b.get("runtime", {}).get("aggregate", {})
+            jitter_a = runtime_agg_a.get("jitter", {}).get("stddev") if isinstance(runtime_agg_a.get("jitter"), dict) else None
+            jitter_b = runtime_agg_b.get("jitter", {}).get("stddev") if isinstance(runtime_agg_b.get("jitter"), dict) else None
             metrics = [
                 compare_metric("TTFT", agg_mean(a, "ttft.total_ms"), agg_mean(b, "ttft.total_ms")),
                 compare_metric("Decode TPS",
@@ -115,9 +139,17 @@ def compare_runs(run_a: dict[str, Any], run_b: dict[str, Any], regression_thresh
                 compare_metric("ms/token",
                                 agg_mean(a, "decode.ms_per_token"),
                                 agg_mean(b, "decode.ms_per_token")),
+                compare_metric("Jitter", jitter_a, jitter_b),
+                compare_metric("Planner", infra_metric(a, "planner"), infra_metric(b, "planner")),
+                compare_metric("Session Create",
+                                infra_metric(a, "session_create"),
+                                infra_metric(b, "session_create")),
+                compare_metric("Materialization",
+                                infra_metric(a, "materialization"),
+                                infra_metric(b, "materialization")),
                 compare_metric("Install (cold)",
-                                a.get("cold", {}).get("install_ms"),
-                                b.get("cold", {}).get("install_ms")),
+                                a.get("infrastructure", {}).get("install_ms") or a.get("cold", {}).get("install_ms"),
+                                b.get("infrastructure", {}).get("install_ms") or b.get("cold", {}).get("install_ms")),
             ]
         else:
             metrics = [
@@ -150,14 +182,23 @@ def compare_runs(run_a: dict[str, Any], run_b: dict[str, Any], regression_thresh
                 pct_val = abs(float(str(pct_s).replace("%", "").replace("+", "")))
             except ValueError:
                 continue
-            if pct_val >= regression_threshold_pct and m["label"] in ("TTFT", "Decode TPS", "Generate TPS", "ms/token"):
-                regressions.append({
-                    "scenario_id": key,
-                    "metric": m["label"],
-                    "pct": pct_s,
-                    "a": m.get("a"),
-                    "b": m.get("b"),
-                })
+            if pct_val < regression_threshold_pct:
+                continue
+            entry = {
+                "scenario_id": key,
+                "metric": m["label"],
+                "pct": pct_s,
+                "a": m.get("a"),
+                "b": m.get("b"),
+                "category": "runtime" if m["label"] in RUNTIME_METRICS else "infrastructure",
+            }
+            regressions.append(entry)
+            if m["label"] in INFRA_METRICS:
+                infra_regressions.append(entry)
+            elif m["label"] in RUNTIME_METRICS:
+                runtime_regressions.append(entry)
+            elif m["label"] in ("TTFT", "Decode TPS", "Generate TPS", "ms/token"):
+                runtime_regressions.append(entry)
 
     mem_a = run_a.get("cluster", {}).get("memory", {}).get("free_total_gb")
     mem_b = run_b.get("cluster", {}).get("memory", {}).get("free_total_gb")
@@ -176,6 +217,8 @@ def compare_runs(run_a: dict[str, Any], run_b: dict[str, Any], regression_thresh
         "cluster_memory": compare_metric("Memory (free GB)", mem_a, mem_b, higher_is_better=True),
         "scenarios": scenario_diffs,
         "regressions": regressions,
+        "infrastructure_regressions": infra_regressions,
+        "runtime_regressions": runtime_regressions,
         "performance_regression": len(regressions) > 0,
     }
 
@@ -220,13 +263,24 @@ def format_text(diff: dict[str, Any]) -> str:
 
     if diff.get("performance_regression"):
         lines.extend([
-            "## ⚠ PERFORMANCE REGRESSION",
+            "## PERFORMANCE REGRESSION",
             "",
             f"Threshold: **{diff.get('regression_threshold_pct', 10)}%**",
             "",
         ])
+        if diff.get("infrastructure_regressions"):
+            lines.append("### Infrastructure")
+            for reg in diff["infrastructure_regressions"]:
+                lines.append(f"- `{reg['scenario_id']}` **{reg['metric']}** {reg['pct']}")
+            lines.append("")
+        if diff.get("runtime_regressions"):
+            lines.append("### Runtime")
+            for reg in diff["runtime_regressions"]:
+                lines.append(f"- `{reg['scenario_id']}` **{reg['metric']}** {reg['pct']}")
+            lines.append("")
         for reg in diff.get("regressions", []):
-            lines.append(f"- `{reg['scenario_id']}` **{reg['metric']}** {reg['pct']} (A={reg['a']} → B={reg['b']})")
+            if reg not in diff.get("infrastructure_regressions", []) and reg not in diff.get("runtime_regressions", []):
+                lines.append(f"- `{reg['scenario_id']}` **{reg['metric']}** {reg['pct']}")
         lines.append("")
 
     return "\n".join(lines)

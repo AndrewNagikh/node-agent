@@ -1,18 +1,22 @@
-# Task 10.1 — Monolithic vs Distributed performance matrix
+# Task 10.1.1 — Persistent-session performance matrix
 
 defaults:
   n_ctx: 512
   sync_timeout_s: 1800
   sync_max_rounds: 8
   wait_cluster_timeout_s: 120
-  repeats: 5
   sample_interval_ms: 100
-  warmup_tokens: 1
   generate_timeout_s: 180
   mono_ngl: 99
   reset_before_run: false
   prompt_category: short
   regression_threshold_pct: 10
+  # Persistent session benchmark (10.1.1)
+  persistent_session: true
+  generations: 20
+  warmup: true
+  warmup_tokens: 4
+  prefill_probe: false
 
 profiles:
   # Full scientific matrix (long run)
@@ -29,16 +33,14 @@ profiles:
       - 2
       - 3
       - 4
-    prompt_categories:
+    prompt_profiles:
       - short
       - medium
-    prompt_lengths:
-      - 16
-      - 128
     generate_tokens:
       - 16
       - 32
-    repeats: 5
+    generations: 20
+    persistent_session: true
     modes:
       - cold
       - warm
@@ -51,13 +53,12 @@ profiles:
     cluster_sizes:
       - mono
       - 3
-    prompt_categories:
+    prompt_profiles:
       - short
-    prompt_lengths:
-      - 16
     generate_tokens:
       - 16
-    repeats: 2
+    generations: 5
+    persistent_session: true
     modes:
       - warm
 
@@ -70,14 +71,13 @@ profiles:
       - qwen2_1_5b
     cluster_sizes:
       - 3
-    prompt_categories:
+    prompt_profiles:
       - short
-    prompt_lengths:
-      - 16
     generate_tokens:
       - 16
-    repeats: 3
+    generations: 10
     reset_before_run: true
+    persistent_session: true
     modes:
       - cold
 
@@ -90,16 +90,15 @@ profiles:
       - qwen2_1_5b
     cluster_sizes:
       - 3
-    prompt_categories:
+    prompt_profiles:
       - short
-    prompt_lengths:
-      - 16
     generate_tokens:
       - 16
-    repeats: 5
+    generations: 20
     reset_before_run: false
     warmup_tokens: 0
     prefill_probe: false
+    persistent_session: true
     modes:
       - warm
 
@@ -114,13 +113,12 @@ profiles:
       - 2
       - 3
       - 4
-    prompt_categories:
+    prompt_profiles:
       - short
-    prompt_lengths:
-      - 16
     generate_tokens:
       - 16
-    repeats: 3
+    generations: 15
     reset_before_run: false
+    persistent_session: true
     modes:
       - warm

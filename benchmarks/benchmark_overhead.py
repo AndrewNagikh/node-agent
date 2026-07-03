@@ -76,12 +76,13 @@ def build_comparison_table(scenarios: list[dict[str, Any]]) -> dict[str, Any]:
     for sc in scenarios:
         cs = str(sc.get("cluster_size_target", ""))
         agg = sc.get("aggregate", {})
+        infra = sc.get("infrastructure", {})
         cols[cs] = {
             "ttft_ms": _mean(agg, "ttft.total_ms"),
             "decode_tps": _mean(agg, "decode.tokens_per_sec"),
             "prefill_tps": _mean(agg, "prefill.tokens_per_sec"),
-            "load_ms": _mean(agg, "load.total_ms"),
-            "install_ms": _mean(agg, "cold.install_ms"),
+            "load_ms": infra.get("session_create_ms") or _mean(agg, "load.total_ms"),
+            "install_ms": infra.get("install_ms") or _mean(agg, "cold.install_ms"),
             "hidden_latency_ms": _mean(agg, "hidden.avg_hop_latency_ms"),
         }
     return cols

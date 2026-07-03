@@ -469,6 +469,18 @@ def run_materialization(model_id: str, cluster: dict[str, Any]) -> StageRecord:
     return rec
 
 
+def destroy_session(session_id: str, timeout: int = 60) -> tuple[int, float, dict[str, Any]]:
+    """Destroy a session; returns (http_status, duration_ms, response)."""
+    if not session_id:
+        return 0, 0.0, {"error": "empty session_id"}
+    t0 = time.perf_counter()
+    status, out = http("DELETE", f"/session/{session_id}", timeout=timeout)
+    if status == 404 or status >= 500:
+        status, out = http("POST", "/session/destroy", {"session_id": session_id}, timeout=timeout)
+    duration_ms = (time.perf_counter() - t0) * 1000.0
+    return status, duration_ms, out if isinstance(out, dict) else {"raw": out}
+
+
 def run_generate_stage(
     session_id: str,
     prompt: str,
@@ -769,7 +781,7 @@ def is_perf_run(profile_name: str, mode: str) -> bool:
 
 def run_perf_main(args: argparse.Namespace) -> int:
     from benchmark_export import collect_git_metadata, default_output_dir, make_run_id, write_json
-    from benchmark_perf import run_perf_suite
+    from benchmark_perf import PerfOptions, run_perf_suite
     from benchmark_report_perf import write_perf_reports
 
     matrix_doc = load_yaml_file(BENCH_DIR / "benchmark_matrix_perf.yaml")
@@ -781,12 +793,33 @@ def run_perf_main(args: argparse.Namespace) -> int:
     profile = {**defaults, **profiles.get(profile_name, profiles.get("perf_smoke", {}))}
     mode = args.mode or profile.get("mode", profile_name)
 
+    persistent = profile.get("persistent_session", True)
+    if getattr(args, "persistent_session", None) is not None:
+        persistent = args.persistent_session
+    warmup = profile.get("warmup", True)
+    if getattr(args, "warmup", None) is not None:
+        warmup = args.warmup
+
+    opts = PerfOptions(
+        persistent_session=persistent,
+        warmup=warmup,
+        runtime_only=getattr(args, "runtime_only", False),
+        infra_only=getattr(args, "infra_only", False),
+        generations=getattr(args, "generations", None),
+        prompt_profile=getattr(args, "prompt_profile", None),
+    )
+
     load_hf_token()
     run_id = make_run_id()
     out_dir = Path(args.output_dir) if args.output_dir else default_output_dir(run_id)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    log(f"Performance Benchmark 10.1 — profile={profile_name} mode={mode}")
+    log(f"Performance Benchmark 10.1.1 — profile={profile_name} mode={mode}")
+    log(f"  persistent_session={opts.persistent_session} generations={opts.generations or profile.get('generations', 20)}")
+    if opts.runtime_only:
+        log("  runtime_only=True (skip full infra pipeline)")
+    if opts.infra_only:
+        log("  infra_only=True (skip runtime benchmark)")
     log(f"Orchestrator: {ORCH}")
     log(f"Output: {out_dir}")
 
@@ -800,6 +833,7 @@ def run_perf_main(args: argparse.Namespace) -> int:
         model_filter=args.model,
         cluster_size_filter=args.cluster_size,
         log=log,
+        opts=opts,
     )
     if document.get("error"):
         log(document["error"])
@@ -827,6 +861,18 @@ def main() -> int:
     parser.add_argument("--regression-threshold", type=float,
                         default=float(os.environ.get("BENCHMARK_REGRESSION_PCT", "10")),
                         help="Regression threshold %% for benchmark_compare")
+    parser.add_argument("--persistent-session", action=argparse.BooleanOptionalAction, default=None,
+                        help="Reuse one session per model (default from YAML profile)")
+    parser.add_argument("--warmup", action=argparse.BooleanOptionalAction, default=None,
+                        help="Run warmup generate before benchmark loop")
+    parser.add_argument("--runtime-only", action="store_true",
+                        help="Skip full infra pipeline; session create + runtime only")
+    parser.add_argument("--infra-only", action="store_true",
+                        help="Run infrastructure benchmark only (no runtime generations)")
+    parser.add_argument("--generations", type=int, default=None,
+                        help="Number of generate calls per session (default: profile generations)")
+    parser.add_argument("--prompt-profile", choices=["short", "medium", "long", "code", "chat", "reasoning"],
+                        default=None, help="Prompt profile (YAML-defined categories)")
     args = parser.parse_args()
 
     models_doc = load_yaml_file(BENCH_DIR / "benchmark_models.yaml")
