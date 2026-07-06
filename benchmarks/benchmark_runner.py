@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.error
@@ -41,6 +42,22 @@ if str(BENCH_DIR) not in sys.path:
 ENV_FILES = [ROOT / ".env", ROOT / "llama.cpp" / ".env"]
 
 ORCH = os.environ.get("ORCHESTRATOR", "http://127.0.0.1:9000")
+
+# When orchestrator runs in Docker but the benchmark driver runs on the host,
+# /nodes advertises docker network aliases (node-a, …) — map to published ports.
+DOCKER_NODE_PORTS: dict[str, tuple[str, int]] = {
+    "node-a": ("127.0.0.1", 9001),
+    "node-b": ("127.0.0.1", 9002),
+    "node-c": ("127.0.0.1", 9003),
+}
+
+
+def resolve_node_endpoint(host: str, port: int) -> tuple[str, int]:
+    if os.environ.get("BENCHMARK_DOCKER", "1") == "1":
+        mapped = DOCKER_NODE_PORTS.get(host)
+        if mapped:
+            return mapped
+    return host, port
 
 
 def log(msg: str) -> None:
@@ -87,10 +104,58 @@ def http(method: str, path: str, body: dict | None = None, timeout: int = 120) -
         except json.JSONDecodeError:
             payload = {"error": raw or str(e)}
         return e.code, payload
+    except (urllib.error.URLError, ConnectionResetError, TimeoutError, OSError) as e:
+        return 0, {"error": str(e)}
+
+
+def docker_compose_dir() -> Path:
+    return ROOT / "llama.cpp" / "tools" / "distributed" / "docker"
+
+
+def docker_nodes_need_restart() -> bool:
+    """True if any node container is not running (OOM exit 137, etc.)."""
+    compose_dir = docker_compose_dir()
+    if not (compose_dir / "docker-compose.yml").is_file():
+        return False
+    result = subprocess.run(
+        ["docker", "compose", "ps", "--format", "{{.Service}}\t{{.State}}"],
+        cwd=compose_dir,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    for line in result.stdout.splitlines():
+        service, _, state = line.partition("\t")
+        if service.startswith("node-") and "running" not in state.lower():
+            return True
+    return False
+
+
+def restart_docker_nodes(services: list[str] | None = None) -> None:
+    compose_dir = docker_compose_dir()
+    targets = services or ["node-a", "node-b", "node-c"]
+    log(f"Restarting Docker nodes: {', '.join(targets)}")
+    subprocess.run(
+        ["docker", "compose", "restart", *targets],
+        cwd=compose_dir,
+        check=False,
+        capture_output=True,
+    )
+
+
+def purge_model_cluster(model_id: str, keep_manifest: bool = False) -> tuple[int, Any]:
+    """Clear layer store + registry install state for one model on all nodes."""
+    return http(
+        "POST",
+        f"/models/{model_id}/reset",
+        {"keep_manifest": keep_manifest},
+        timeout=180,
+    )
 
 
 def node_http(host: str, port: int, path: str, method: str = "GET", body: dict | None = None,
               timeout: int = 15) -> tuple[int, Any]:
+    host, port = resolve_node_endpoint(host, port)
     url = f"http://{host}:{port}{path}"
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     data = json.dumps(body).encode() if body is not None else None
@@ -106,6 +171,8 @@ def node_http(host: str, port: int, path: str, method: str = "GET", body: dict |
         except json.JSONDecodeError:
             payload = {"error": raw or str(e)}
         return e.code, payload
+    except (urllib.error.URLError, ConnectionResetError, TimeoutError, OSError) as e:
+        return 0, {"error": str(e)}
 
 
 @dataclass
@@ -170,6 +237,8 @@ def fetch_cluster_snapshot() -> dict[str, Any]:
             "node_id": n.get("node_id", n.get("node", "")),
             "host": n.get("host", ""),
             "port": n.get("port", 0),
+            "connect_host": resolve_node_endpoint(n.get("host", ""), int(n.get("port", 0)))[0],
+            "connect_port": resolve_node_endpoint(n.get("host", ""), int(n.get("port", 0) or 0))[1],
             "gpu": n.get("gpu", n.get("hardware", {}).get("gpu_name", "")),
             "backend": n.get("hardware", {}).get("backend", n.get("system", {}).get("arch", "")),
             "score": n.get("score", n.get("performance", {}).get("score")),
@@ -205,6 +274,98 @@ def wait_cluster(min_count: int, timeout_s: int) -> tuple[bool, dict[str, Any]]:
             return True, snap
         time.sleep(2)
     return False, last
+
+
+def release_cluster_workers(cluster: dict[str, Any]) -> dict[str, Any]:
+    """POST /shutdown on every node to free worker memory between scenarios."""
+    results: dict[str, Any] = {}
+    for n in cluster.get("nodes", []):
+        host = n.get("connect_host") or n.get("host", "")
+        port = int(n.get("connect_port") or n.get("port", 0))
+        nid = n.get("node_id", "")
+        if not host or not port or not nid:
+            continue
+        status, out = node_http(host, port, "/shutdown", method="POST", body={}, timeout=30)
+        results[nid] = {"status": status, "response": out}
+    return results
+
+
+def recover_docker_cluster(min_count: int, timeout_s: int) -> tuple[bool, dict[str, Any]]:
+    """Wait for cluster; restart Docker nodes if degraded or OOM-killed."""
+    if os.environ.get("BENCHMARK_DOCKER", "1") != "1":
+        return wait_cluster(min_count, timeout_s)
+
+    if docker_nodes_need_restart():
+        restart_docker_nodes()
+
+    ok, snap = wait_cluster(min_count, min(45, timeout_s))
+    if ok:
+        return ok, snap
+
+    log(f"Cluster degraded ({snap.get('node_count', 0)}/{min_count} nodes) — restarting Docker nodes")
+    restart_docker_nodes()
+    return wait_cluster(min_count, timeout_s)
+
+
+def inter_scenario_cleanup(
+    profile: dict[str, Any],
+    cluster: dict[str, Any],
+    scenario: dict[str, Any],
+    min_nodes: int,
+) -> dict[str, Any]:
+    """Destroy session, purge model layers, shutdown workers, restart nodes if needed."""
+    if not profile.get("release_workers_between_models", True):
+        return cluster
+
+    sess_stage = next(
+        (s for s in scenario.get("stages", []) if s.get("name") == "session_create"),
+        None,
+    )
+    session_id = ""
+    if sess_stage:
+        session_id = sess_stage.get("metrics", {}).get("session_id", "")
+
+    if session_id:
+        destroy_session(session_id)
+
+    completed_model = scenario.get("model_id", "")
+    purge_metrics: dict[str, Any] = {}
+    if profile.get("purge_model_after_scenario", True) and completed_model:
+        status, out = purge_model_cluster(completed_model, keep_manifest=False)
+        purge_metrics = {"status": status, "response": out if isinstance(out, dict) else {}}
+        if status != 200:
+            log(f"Warning: purge {completed_model} returned HTTP {status}")
+
+    try:
+        cluster = fetch_cluster_snapshot()
+    except Exception as exc:  # noqa: BLE001
+        log(f"Warning: cluster snapshot failed during cleanup: {exc}")
+        cluster = cluster or {}
+
+    worker_release = release_cluster_workers(cluster)
+    shutdown_failed = any(
+        r.get("status", 0) != 200 for r in worker_release.values() if isinstance(r, dict)
+    )
+
+    docker_mode = os.environ.get("BENCHMARK_DOCKER", "1") == "1"
+    proactive_restart = profile.get("restart_docker_nodes_between_models", False)
+    if docker_mode and (proactive_restart or shutdown_failed or docker_nodes_need_restart()):
+        reason = "scheduled" if proactive_restart else "node failure/OOM recovery"
+        log(f"Docker node restart ({reason})")
+        restart_docker_nodes()
+
+    cooldown = float(profile.get("inter_scenario_cooldown_s", 5))
+    if cooldown > 0:
+        log(f"Inter-scenario cooldown {cooldown}s")
+        time.sleep(cooldown)
+
+    ok, cluster = recover_docker_cluster(
+        min_nodes,
+        int(profile.get("wait_cluster_timeout_s", 120)),
+    )
+    if not ok:
+        log(f"Warning: cluster not fully recovered ({cluster.get('node_count', 0)}/{min_nodes} nodes)")
+    return cluster
 
 
 def model_record(model_id: str) -> dict[str, Any]:
@@ -323,7 +484,9 @@ def wait_install_job(job_id: str, timeout_s: int, traces_dir: Path) -> tuple[dic
 def sample_node_runtime(cluster: dict[str, Any]) -> dict[str, Any]:
     samples = {}
     for n in cluster.get("nodes", []):
-        host, port, nid = n.get("host", ""), int(n.get("port", 0)), n.get("node_id", "")
+        host = n.get("connect_host") or n.get("host", "")
+        port = int(n.get("connect_port") or n.get("port", 0))
+        nid = n.get("node_id", "")
         if not host or not port:
             continue
         status, out = node_http(host, port, "/status", timeout=5)
@@ -372,21 +535,16 @@ def run_sync_loop(
             "missing_layers": missing,
         })
 
-        if state == "READY" and missing == 0 and total > 0:
-            status, plan = http("POST", f"/models/{model_id}/install-plan", timeout=120)
-            if status == 200 and plan.get("operation_count", 0) == 0:
-                break
-
         status, plan = http("POST", f"/models/{model_id}/install-plan", timeout=120)
         if status != 200:
             sync_rec.notes.append(f"install-plan error round {round_i + 1}")
             break
-        ops = int(plan.get("operation_count", 0))
-        bytes_ = int(plan.get("total_download_bytes", 0))
+        ops = int(plan.get("operation_count", 0) or 0)
+        bytes_ = int(plan.get("total_download_bytes", 0) or 0)
         total_ops += ops
         total_bytes += bytes_
         if ops == 0:
-            continue
+            break
 
         status, out = http("POST", f"/models/{model_id}/install/execute", timeout=120)
         job_id = out.get("job_id", "") if status == 200 else ""
@@ -442,10 +600,45 @@ def inject_fault(fault_cfg: dict[str, Any], cluster: dict[str, Any]) -> dict[str
     target = fault_cfg.get("fault_node", "")
     for n in cluster.get("nodes", []):
         if n.get("node_id") == target:
-            host, port = n.get("host", ""), int(n.get("port", 0))
+            host = n.get("connect_host") or n.get("host", "")
+            port = int(n.get("connect_port") or n.get("port", 0))
             status, out = node_http(host, port, "/shutdown", method="POST", body={}, timeout=10)
             return {"node": target, "status": status, "response": out}
     return {"node": target, "status": 0, "error": "node not found"}
+
+
+def orchestrator_rss_sample(stage: str) -> dict[str, Any]:
+    """Sample orchestrator control-plane RSS (/debug/rss)."""
+    status, out = http("GET", "/debug/rss", timeout=5)
+    if status != 200 or not isinstance(out, dict):
+        return {"stage": stage, "http_status": status}
+    return {
+        "stage": stage,
+        "rss_bytes": out.get("rss_bytes"),
+        "rss_mb": out.get("rss_mb"),
+        "http_status": status,
+    }
+
+
+def collect_all_node_runtime_stats(cluster: dict[str, Any]) -> dict[str, Any]:
+    """Aggregate /status runtime_stats from every online node."""
+    out: dict[str, Any] = {}
+    totals: dict[str, int] = {}
+    for n in cluster.get("nodes", []):
+        host = n.get("connect_host") or n.get("host", "")
+        port = int(n.get("connect_port") or n.get("port", 0))
+        nid = n.get("node_id", "")
+        if not host or not port or not nid:
+            continue
+        status, body = node_http(host, port, "/status", timeout=5)
+        stats = body.get("runtime_stats", {}) if status == 200 and isinstance(body, dict) else {}
+        out[nid] = stats
+        if isinstance(stats, dict):
+            for key, val in stats.items():
+                if isinstance(val, (int, float)):
+                    totals[key] = totals.get(key, 0) + int(val)
+    out["_totals"] = totals
+    return out
 
 
 def run_materialization(model_id: str, cluster: dict[str, Any]) -> StageRecord:
@@ -577,6 +770,19 @@ def run_scenario(
     )
     log(f"\n=== benchmark {scenario_id} ===")
 
+    min_nodes = int(matrix_row.get("cluster_size_target", 3))
+    ok, cluster = recover_docker_cluster(
+        min_nodes,
+        int(profile.get("wait_cluster_timeout_s", 120)),
+    )
+    if not ok:
+        notes.append(
+            f"cluster has {cluster.get('node_count', 0)} nodes, need {min_nodes} — scenario may fail"
+        )
+
+    if profile.get("release_workers_before_run", True):
+        release_cluster_workers(cluster)
+
     stages: list[StageRecord] = []
     started_at = utc_now()
     notes: list[str] = []
@@ -684,8 +890,17 @@ def run_scenario(
 
     # Session create
     n_ctx = int(profile.get("n_ctx", 512))
+    session_create_timeout_s = int(profile.get(
+        "session_create_timeout_s",
+        900 if os.environ.get("DIST_RUNTIME_LAYER_FIRST", "0") == "1" else 300,
+    ))
     with StageTimer("session_create") as sess:
-        status, out = http("POST", "/session/create", {"model": model_id, "n_ctx": n_ctx}, timeout=300)
+        status, out = http(
+            "POST",
+            "/session/create",
+            {"model": model_id, "n_ctx": n_ctx},
+            timeout=session_create_timeout_s,
+        )
         sess.response = out if isinstance(out, dict) else {}
         session_id = out.get("session_id", "") if isinstance(out, dict) else ""
     sess.metrics = {
@@ -695,6 +910,14 @@ def run_scenario(
         "memory": out.get("memory", {}) if isinstance(out, dict) else {},
         "configure_time_ms": round(sess.duration_ms, 2),
     }
+    if isinstance(out, dict):
+        sess.metrics["runtime_graph"] = out.get("runtime_graph")
+        sess.metrics["orchestrator_rss"] = orchestrator_rss_sample("session_create")
+        sess.metrics["node_runtime_stats"] = collect_all_node_runtime_stats(cluster)
+        totals = sess.metrics["node_runtime_stats"].get("_totals", {})
+        sess.metrics["materialization_count"] = totals.get("materialization_count", 0)
+        sess.metrics["runtime_load_count"] = totals.get("runtime_load_count", 0)
+        sess.metrics["layer_first_ok"] = totals.get("materialization_count", 0) == 0
     stages.append(sess)
 
     prompt_len = int(matrix_row.get("prompt_length", 16))
@@ -725,9 +948,21 @@ def run_scenario(
         warmup = int(profile.get("stress_warmup", 5))
         stress_result = run_stress(session_id, prompt, gen_tokens, requests, warmup)
 
-    # Cleanup — record only; no correctness checks
+    # Cleanup — destroy session and release worker memory on nodes.
     with StageTimer("cleanup") as clean:
-        clean.metrics = {"session_id": session_id}
+        if session_id:
+            status, destroy_ms, destroy_out = destroy_session(session_id)
+            clean.metrics = {
+                "session_id": session_id,
+                "destroy_status": status,
+                "destroy_ms": round(destroy_ms, 2),
+            }
+            if isinstance(destroy_out, dict) and destroy_out.get("error"):
+                clean.notes.append(str(destroy_out["error"]))
+        else:
+            clean.metrics = {"session_id": ""}
+        worker_release = release_cluster_workers(cluster)
+        clean.metrics["worker_shutdown"] = worker_release
     stages.append(clean)
 
     finished_at = utc_now()
@@ -944,6 +1179,20 @@ def main() -> int:
             })
             continue
         cluster = fetch_cluster_snapshot()
+        min_nodes = int(row["cluster_size_target"])
+        ok, cluster = wait_cluster(min_nodes, int(profile.get("wait_cluster_timeout_s", 120)))
+        if not ok:
+            scenarios.append({
+                "run_id": run_id,
+                "scenario_id": f"{mk}_c{target}_cluster_wait",
+                "model_key": mk,
+                "model_id": cfg["model_id"],
+                "cluster_size_target": target,
+                "cluster_size_observed": cluster.get("node_count", 0),
+                "error": f"cluster has {cluster.get('node_count', 0)} nodes, need {min_nodes}",
+                "stages": [],
+            })
+            continue
         try:
             sc = run_scenario(mk, cfg, row, profile, run_id, traces_dir, cluster, mode)
         except Exception as exc:  # noqa: BLE001
@@ -959,6 +1208,14 @@ def main() -> int:
             }
         scenarios.append(sc)
         write_trace(traces_dir, sc.get("scenario_id", mk), sc)
+        try:
+            cluster = inter_scenario_cleanup(profile, cluster, sc, min_nodes)
+        except Exception as exc:  # noqa: BLE001
+            log(f"Warning: inter-scenario cleanup failed after {mk}: {exc}")
+            _, cluster = recover_docker_cluster(
+                min_nodes,
+                int(profile.get("wait_cluster_timeout_s", 120)),
+            )
 
     metadata = collect_git_metadata()
     document = build_results_document(

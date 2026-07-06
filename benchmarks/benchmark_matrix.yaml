@@ -98,3 +98,33 @@ profiles:
       - 32
     fault_node: node-c
     fault_stage: synchronization
+
+  # Task 11 — all architecture families on 3-node Docker; max Qwen3-8B
+  task11_docker:
+    mode: task11
+    models:
+      - tinyllama
+      - llama3_1b
+      - qwen2_1_5b
+      - gemma3_1b
+      - phi3_5
+      - smollm2_1_7b
+      - deepseek_qwen_1_5b
+      - qwen8b
+    cluster_sizes:
+      - 3
+    prompt_lengths:
+      - 16
+    generate_tokens:
+      - 32
+    reset_before_run: true
+    warmup_tokens: 4
+    sync_timeout_s: 3600
+    sync_max_rounds: 12
+    wait_cluster_timeout_s: 180
+    release_workers_between_models: true
+    release_workers_before_run: true
+    purge_model_after_scenario: true
+    restart_docker_nodes_between_models: true
+    inter_scenario_cooldown_s: 15
+    stop_if_not_fits: true
