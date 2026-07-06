@@ -20,16 +20,23 @@ param(
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$NinjaBin = Join-Path $Root "llama.cpp\build\bin\node_agent.exe"
-$MsvcBin = Join-Path $Root "llama.cpp\build\bin\Release\node_agent.exe"
-if (Test-Path $NinjaBin) {
-    $BinDir = Split-Path $NinjaBin -Parent
-    $Bin = $NinjaBin
-} elseif (Test-Path $MsvcBin) {
-    $BinDir = Split-Path $MsvcBin -Parent
-    $Bin = $MsvcBin
-} else {
-    throw "node_agent.exe not found - run .\build.ps1 agents or scripts\build-native.cmd"
+
+function Resolve-NodeAgentBinary {
+    $ninjaBin = Join-Path $Root "llama.cpp\build\bin\node_agent.exe"
+    $msvcBin = Join-Path $Root "llama.cpp\build\bin\Release\node_agent.exe"
+    if (Test-Path $ninjaBin) {
+        return @{
+            BinDir = Split-Path $ninjaBin -Parent
+            Bin    = $ninjaBin
+        }
+    }
+    if (Test-Path $msvcBin) {
+        return @{
+            BinDir = Split-Path $msvcBin -Parent
+            Bin    = $msvcBin
+        }
+    }
+    return $null
 }
 
 function Load-EnvFile {
@@ -91,11 +98,18 @@ function Ensure-FirewallRules {
   Write-Host "firewall: allowed inbound TCP $HttpPort and 9100-9700"
 }
 
-if ($Build -or -not (Test-Path $Bin)) {
+$resolved = Resolve-NodeAgentBinary
+if ($Build -or -not $resolved) {
     $buildArgs = @("agents")
     if ($Cuda) { $buildArgs += "-Cuda" }
     & (Join-Path $Root "build.ps1") @buildArgs
+    $resolved = Resolve-NodeAgentBinary
 }
+if (-not $resolved) {
+    throw "node_agent.exe not found - run .\build.ps1 agents or scripts\build-native.cmd"
+}
+$BinDir = $resolved.BinDir
+$Bin = $resolved.Bin
 
 $ports = @{ "node-a" = 9001; "node-b" = 9002; "node-c" = 9003 }
 if ($Port -eq 0) { $Port = $ports[$NodeId] }

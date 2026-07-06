@@ -81,6 +81,10 @@ fi
 PORT="${PORT:-$(node_agent_default_port "$NODE_ID")}"
 ADVERTISE_HOST="$(node_agent_detect_lan_ip)"
 node_agent_ensure_hf_token "$ROOT"
+if [[ -z "$MODELS_DIR" ]]; then
+  MODELS_DIR="$HOME/.distributed-llm/models"
+fi
+mkdir -p "$MODELS_DIR"
 
 BIN="$ROOT/llama.cpp/build/bin/node_agent"
 ARGS=(
@@ -88,6 +92,7 @@ ARGS=(
   --advertise-host "$ADVERTISE_HOST"
   --orchestrator "$ORCHESTRATOR"
   --node-id "$NODE_ID"
+  --models-dir "$MODELS_DIR"
 )
 
 if [[ -n "$MODEL" ]]; then
@@ -96,10 +101,6 @@ if [[ -n "$MODEL" ]]; then
     exit 1
   fi
   ARGS+=(--model "$MODEL")
-fi
-
-if [[ -n "$MODELS_DIR" ]]; then
-  ARGS+=(--models-dir "$MODELS_DIR")
 fi
 
 if [[ "$REBENCHMARK" == true || "$REBENCHMARK" == "1" ]]; then
@@ -117,9 +118,7 @@ if [[ -n "$MODEL" ]]; then
 else
   echo "run-agent: layer-first mode (no local MODEL)"
 fi
-if [[ -n "$MODELS_DIR" ]]; then
-  echo "run-agent: models_dir=$MODELS_DIR"
-fi
+echo "run-agent: models_dir=$MODELS_DIR"
 if [[ "$VERIFY_MATERIALIZATION" == true || "$VERIFY_MATERIALIZATION" == "1" ]]; then
   echo "run-agent: verify_materialization=on"
 fi
