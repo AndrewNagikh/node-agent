@@ -143,6 +143,31 @@ def restart_docker_nodes(services: list[str] | None = None) -> None:
     )
 
 
+def ensure_docker_perf_trace_enabled() -> None:
+    """Recreate Docker cluster with DIST_PERF_TRACE=1 (compose env interpolation)."""
+    compose_dir = docker_compose_dir()
+    if not (compose_dir / "docker-compose.yml").is_file():
+        return
+    log("Enabling DIST_PERF_TRACE on Docker cluster (recreate containers)")
+    env = os.environ.copy()
+    env["DIST_PERF_TRACE"] = "1"
+    if os.environ.get("DIST_PERF_TRACE_GGML", "0") not in ("0", "", "false", "FALSE"):
+        env["DIST_PERF_TRACE_GGML"] = "1"
+    subprocess.run(
+        [
+            "docker", "compose", "up", "-d", "--force-recreate",
+            "orchestrator", "node-a", "node-b", "node-c",
+        ],
+        cwd=compose_dir,
+        env=env,
+        check=False,
+    )
+    min_nodes = 3
+    ok, _ = wait_cluster(min_nodes, int(os.environ.get("BENCHMARK_WAIT_CLUSTER_S", "120")))
+    if not ok:
+        log("Warning: cluster not ready after perf trace recreate")
+
+
 def purge_model_cluster(model_id: str, keep_manifest: bool = False) -> tuple[int, Any]:
     """Clear layer store + registry install state for one model on all nodes."""
     return http(
@@ -674,6 +699,73 @@ def destroy_session(session_id: str, timeout: int = 60) -> tuple[int, float, dic
     return status, duration_ms, out if isinstance(out, dict) else {"raw": out}
 
 
+def merge_perf_trace_from_response(response: dict[str, Any], out_dir: Path) -> dict[str, Any] | None:
+    """Merge Task 12 perf trace JSONL if trace dir is available locally."""
+    timing = response.get("timing") if isinstance(response, dict) else None
+    if not isinstance(timing, dict):
+        return None
+    trace_dir = timing.get("perf_trace_dir")
+    if not trace_dir:
+        return None
+    src = Path(str(trace_dir))
+    if not src.is_dir():
+        return None
+    try:
+        sys.path.insert(0, str(BENCH_DIR))
+        from perf_trace.merge import merge_trace_dir  # noqa: WPS433
+
+        dst = out_dir / "perf_trace" / str(timing.get("trace_id", "unknown"))
+        return merge_trace_dir(src, dst)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc), "trace_dir": str(src)}
+
+
+def _primary_scenario(scenarios: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for sc in scenarios:
+        if sc.get("skipped") or sc.get("error"):
+            continue
+        return sc
+    return scenarios[0] if scenarios else None
+
+
+def run_perf_trace_bundle(
+        out_dir: Path,
+        cluster: dict[str, Any],
+        *,
+        profile_name: str,
+        scenarios: list[dict[str, Any]],
+        pin_if_missing: bool = True,
+) -> dict[str, Any] | None:
+    """Collect raw JSONL traces and run Task 12 post-processing pipeline."""
+    sys.path.insert(0, str(BENCH_DIR))
+    from perf_trace.collect import collect_traces  # noqa: WPS433
+    from perf_trace.postprocess import run_postprocess  # noqa: WPS433
+
+    raw_dir = out_dir / "perf_trace" / "raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    collected = collect_traces(raw_dir, orchestrator=ORCH, cluster=cluster)
+    log(f"Perf trace: collected {collected} JSONL file(s) -> {raw_dir}")
+    if collected < 1:
+        return None
+
+    primary = _primary_scenario(scenarios) or {}
+    model_key = str(primary.get("model_key", "tinyllama"))
+    cluster_size = int(primary.get("cluster_size_target", cluster.get("node_count", 3)))
+
+    doc = run_postprocess(
+        raw_dir,
+        out_dir / "perf_trace",
+        profile=profile_name,
+        model=model_key,
+        cluster_size=cluster_size,
+        pin_if_missing=pin_if_missing,
+    )
+    log(f"Perf trace: analysis -> {doc.get('analysis_dir')}")
+    if doc.get("timeline_html"):
+        log(f"Perf trace: timeline -> {doc['timeline_html']}")
+    return doc
+
+
 def run_generate_stage(
     session_id: str,
     prompt: str,
@@ -702,6 +794,8 @@ def run_generate_stage(
     }
     if status != 200 and isinstance(out, dict):
         rec.notes.append(str(out.get("error", out)))
+    if isinstance(out, dict) and isinstance(out.get("timing"), dict):
+        rec.metrics["timing"] = out["timing"]
     return rec
 
 
@@ -941,6 +1035,14 @@ def run_scenario(
             gen.metrics.update(estimates)
         gen.metrics["runtime_before"] = runtime_before
         gen.metrics["runtime_after"] = sample_node_runtime(cluster)
+        if profile.get("perf_trace") and isinstance(gen.response, dict):
+            perf_doc = merge_perf_trace_from_response(gen.response, traces_dir.parent)
+            if perf_doc:
+                gen.metrics["perf_trace"] = {
+                    "event_count": perf_doc.get("event_count"),
+                    "token_count": perf_doc.get("token_count"),
+                    "bottleneck_pct": (perf_doc.get("bottleneck") or {}).get("category_pct"),
+                }
         stages.append(gen)
 
     if mode == "stress" and session_id:
@@ -1115,6 +1217,8 @@ def main() -> int:
     parser.add_argument("--resume", action="store_true", help="Resume from checkpoint in output dir")
     parser.add_argument("--resume-dir", help="Checkpoint directory for --resume")
     parser.add_argument("--no-verify", action="store_true", help="Disable session reuse verification")
+    parser.add_argument("--profile-runtime", action="store_true",
+                        help="Enable Task 12 perf trace (DIST_PERF_TRACE=1) and merge decode timeline")
     args = parser.parse_args()
 
     models_doc = load_yaml_file(BENCH_DIR / "benchmark_models.yaml")
@@ -1135,6 +1239,12 @@ def main() -> int:
     profiles = matrix_doc.get("profiles", {})
     profile = {**defaults, **profiles.get(args.profile, profiles.get("default", {}))}
     mode = args.mode or profile.get("mode", "default")
+    if args.profile_runtime:
+        os.environ["DIST_PERF_TRACE"] = "1"
+        os.environ["DIST_PERF_TRACE_GGML"] = "1"
+        profile["perf_trace"] = True
+        if os.environ.get("BENCHMARK_DOCKER", "1") == "1" and os.environ.get("BENCHMARK_SKIP_DOCKER_PERF_RECREATE", "0") != "1":
+            ensure_docker_perf_trace_enabled()
 
     load_hf_token()
     run_id = make_run_id()
@@ -1218,6 +1328,16 @@ def main() -> int:
             )
 
     metadata = collect_git_metadata()
+    perf_trace_doc: dict[str, Any] | None = None
+    if args.profile_runtime or profile.get("perf_trace"):
+        perf_trace_doc = run_perf_trace_bundle(
+            out_dir,
+            cluster,
+            profile_name=args.profile,
+            scenarios=scenarios,
+            pin_if_missing=True,
+        )
+
     document = build_results_document(
         run_id=run_id,
         profile=args.profile,
@@ -1226,6 +1346,7 @@ def main() -> int:
         cluster=cluster,
         scenarios=scenarios,
         metadata=metadata,
+        perf_trace=perf_trace_doc,
     )
     paths = save_results_bundle(out_dir, document)
     write_reports(out_dir, document)
@@ -1233,6 +1354,10 @@ def main() -> int:
     log(f"Saved: {paths['results_csv']}")
     log(f"Saved: {out_dir / 'report.md'}")
     log(f"Saved: {out_dir / 'report.html'}")
+    if perf_trace_doc and perf_trace_doc.get("timeline_html"):
+        log(f"Saved: {perf_trace_doc['timeline_html']}")
+    if perf_trace_doc and (out_dir / "perf_trace" / "analysis" / "report.md").is_file():
+        log(f"Saved: {out_dir / 'perf_trace' / 'analysis' / 'report.md'}")
     log(f"Scenarios: {len(scenarios)}")
     return 0
 

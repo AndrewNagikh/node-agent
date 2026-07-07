@@ -128,3 +128,89 @@ profiles:
     restart_docker_nodes_between_models: true
     inter_scenario_cooldown_s: 15
     stop_if_not_fits: true
+
+  # Task 12 — perf trace verification on 3-node Docker (single model, fast)
+  task12_docker:
+    mode: task12
+    models:
+      - tinyllama
+    cluster_sizes:
+      - 3
+    prompt_lengths:
+      - 16
+    generate_tokens:
+      - 8
+    reset_before_run: true
+    warmup_tokens: 2
+    sync_timeout_s: 1800
+    sync_max_rounds: 8
+    wait_cluster_timeout_s: 120
+    session_create_timeout_s: 600
+    release_workers_between_models: false
+    release_workers_before_run: true
+    purge_model_after_scenario: false
+    restart_docker_nodes_between_models: false
+    inter_scenario_cooldown_s: 5
+    stop_if_not_fits: true
+    perf_trace: true
+
+  # Homelab LAN — full catalog on physical 3-node cluster
+  homelab_full:
+    mode: homelab
+    models:
+      - tinyllama
+      - llama3_1b
+      - qwen2_1_5b
+      - gemma3_1b
+      - phi3_5
+      - smollm2_1_7b
+      - deepseek_qwen_1_5b
+      - qwen8b
+      - qwen14b
+      - qwen30b
+      - gemma27b
+    cluster_sizes:
+      - 3
+    prompt_lengths:
+      - 16
+    generate_tokens:
+      - 32
+    reset_before_run: true
+    warmup_tokens: 4
+    sync_timeout_s: 7200
+    sync_max_rounds: 12
+    wait_cluster_timeout_s: 180
+    session_create_timeout_s: 1200
+    release_workers_between_models: true
+    release_workers_before_run: true
+    purge_model_after_scenario: true
+    restart_docker_nodes_between_models: false
+    inter_scenario_cooldown_s: 15
+    stop_if_not_fits: true
+    perf_trace: true
+
+  # Task 12 runtime profile — homelab subset with full trace phases
+  runtime_profile:
+    mode: homelab
+    models:
+      - tinyllama
+      - smollm2_1_7b
+      - qwen8b
+    cluster_sizes:
+      - 3
+    prompt_lengths:
+      - 16
+    generate_tokens:
+      - 32
+    reset_before_run: true
+    warmup_tokens: 4
+    sync_timeout_s: 7200
+    sync_max_rounds: 12
+    wait_cluster_timeout_s: 180
+    session_create_timeout_s: 1200
+    release_workers_between_models: true
+    release_workers_before_run: true
+    purge_model_after_scenario: true
+    inter_scenario_cooldown_s: 15
+    stop_if_not_fits: true
+    perf_trace: true

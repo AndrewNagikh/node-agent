@@ -30,10 +30,42 @@ def _bar(value: float, max_value: float, width: int = 20) -> str:
     return "█" * filled
 
 
+def scenario_status(sc: dict[str, Any]) -> tuple[str, str]:
+    if sc.get("skipped"):
+        notes = sc.get("notes") or []
+        return "SKIPPED", str(notes[0]) if notes else ""
+    if sc.get("error"):
+        return "FAIL", str(sc["error"])
+    if sc.get("skipped_after_layout"):
+        notes = sc.get("notes") or []
+        return "SKIP_LAYOUT", str(notes[0]) if notes else "fits_cluster=false"
+    gen = next((s for s in sc.get("stages", []) if s.get("name") == "generate"), None)
+    if gen is not None:
+        status = gen.get("metrics", {}).get("http_status")
+        if status == 200:
+            return "PASS", ""
+        notes = gen.get("notes") or []
+        return "FAIL", "; ".join(str(n) for n in notes) or f"generate HTTP {status}"
+    sess = next((s for s in sc.get("stages", []) if s.get("name") == "session_create"), None)
+    if sess is not None and sess.get("metrics", {}).get("http_status") != 200:
+        notes = sess.get("notes") or []
+        return "FAIL", "; ".join(str(n) for n in notes) or "session_create failed"
+    sync = next((s for s in sc.get("stages", []) if s.get("name") == "synchronization"), None)
+    if sync is not None:
+        state = sync.get("metrics", {}).get("state", "")
+        if state and state not in ("completed", "READY"):
+            notes = sync.get("notes") or []
+            return "FAIL", "; ".join(str(n) for n in notes) or f"sync state={state}"
+    return "PARTIAL", ""
+
+
 def summarize_scenario(sc: dict[str, Any]) -> dict[str, Any]:
+    status, note = scenario_status(sc)
     return {
         "scenario_id": sc.get("scenario_id", ""),
         "model": sc.get("model_key", ""),
+        "status": status,
+        "status_note": note,
         "planner_ms": _stage_ms(sc, "layout"),
         "install_ms": _stage_ms(sc, "synchronization"),
         "coverage_ms": _stage_ms(sc, "coverage"),
@@ -87,17 +119,17 @@ def build_markdown(document: dict[str, Any]) -> str:
         "",
         "## Scenarios",
         "",
-        "| Model | Planner | Install | Coverage | Materialize | Generate TPS | Fits |",
-        "|-------|---------|---------|----------|-------------|--------------|------|",
+        "| Model | Status | Planner | Install | Coverage | Materialize | Generate TPS | Fits |",
+        "|-------|--------|---------|---------|----------|-------------|--------------|------|",
     ])
 
     for sc in scenarios:
         if sc.get("skipped"):
-            lines.append(f"| {sc.get('model_key')} | — | — | — | — | — | skipped |")
+            lines.append(f"| {sc.get('model_key')} | SKIPPED | — | — | — | — | — | — |")
             continue
         sm = summarize_scenario(sc)
         lines.append(
-            f"| {sm['model']} | {fmt_ms(sm['planner_ms'])} | {fmt_s(sm['install_ms'])} | "
+            f"| {sm['model']} | {sm['status']} | {fmt_ms(sm['planner_ms'])} | {fmt_s(sm['install_ms'])} | "
             f"{fmt_ms(sm['coverage_ms'])} | {fmt_ms(sm['materialization_ms'])} | "
             f"{fmt_tps(sm['generate_tps'])} | {sm['fits_cluster']} |"
         )
@@ -118,15 +150,54 @@ def build_markdown(document: dict[str, Any]) -> str:
         ])
 
     summary = document.get("summary", {})
-    if summary.get("generate_tps_avg"):
+    if summary:
         lines.extend([
             "",
             "## Summary",
             "",
             f"- Scenarios: {summary.get('scenario_count', 0)}",
-            f"- Avg generate TPS: **{summary.get('generate_tps_avg')}**",
-            f"- Max generate TPS: **{summary.get('generate_tps_max')}**",
         ])
+        status_counts = summary.get("status_counts") or {}
+        if status_counts:
+            counts = ", ".join(f"{k}={v}" for k, v in sorted(status_counts.items()))
+            lines.append(f"- Status: {counts}")
+        if summary.get("generate_tps_avg") is not None:
+            lines.append(f"- Avg generate TPS: **{summary.get('generate_tps_avg')}**")
+        if summary.get("generate_tps_max") is not None:
+            lines.append(f"- Max generate TPS: **{summary.get('generate_tps_max')}**")
+
+    perf = document.get("perf_trace")
+    if isinstance(perf, dict) and perf.get("budget"):
+        lines.extend(["", "## Runtime Perf Trace (Task 12)", ""])
+        if perf.get("analysis_dir"):
+            lines.append(f"- Analysis: `{perf['analysis_dir']}`")
+        if perf.get("timeline_html"):
+            lines.append(f"- Timeline: `{perf['timeline_html']}`")
+        reg = perf.get("regression")
+        if isinstance(reg, dict):
+            lines.append(
+                f"- Regression: PASS={reg.get('PASS', 0)} "
+                f"WARN={reg.get('WARN', 0)} FAIL={reg.get('FAIL', 0)}"
+            )
+        lines.extend([
+            "",
+            "| Metric | Value | Target | Status |",
+            "|--------|-------|--------|--------|",
+        ])
+        for row in perf.get("budget", []):
+            if row.get("status") == "SKIP":
+                continue
+            val = row.get("value")
+            tgt = row.get("target")
+            val_s = "—" if val is None else f"{val}{row.get('unit', '')}"
+            tgt_s = "—" if tgt is None else f"{tgt}{row.get('unit', '')}"
+            lines.append(
+                f"| {row.get('label', '')} | {val_s} | {tgt_s} | {row.get('status', '')} |"
+            )
+        buckets = perf.get("bottleneck_pct") or {}
+        if buckets:
+            parts = ", ".join(f"{k} {v}%" for k, v in sorted(buckets.items(), key=lambda x: -x[1]))
+            lines.extend(["", f"**Decode buckets:** {parts}"])
 
     lines.append("")
     return "\n".join(lines)

@@ -194,10 +194,11 @@ def build_results_document(
     cluster: dict[str, Any],
     scenarios: list[dict[str, Any]],
     metadata: dict[str, Any] | None = None,
+    perf_trace: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     started = scenarios[0].get("started_at") if scenarios else None
     finished = scenarios[-1].get("finished_at") if scenarios else None
-    return {
+    doc = {
         "benchmark_version": "1.0",
         "run_id": run_id,
         "profile": profile,
@@ -211,13 +212,21 @@ def build_results_document(
         "scenarios": scenarios,
         "summary": summarize_scenarios(scenarios),
     }
+    if perf_trace:
+        doc["perf_trace"] = perf_trace
+    return doc
 
 
 def summarize_scenarios(scenarios: list[dict[str, Any]]) -> dict[str, Any]:
     if not scenarios:
         return {}
+    from benchmark_report import scenario_status
+
     tps_vals = []
+    status_counts: dict[str, int] = {}
     for sc in scenarios:
+        status, _ = scenario_status(sc)
+        status_counts[status] = status_counts.get(status, 0) + 1
         gen = next((s for s in sc.get("stages", []) if s["name"] == "generate"), None)
         if gen:
             tps = gen.get("metrics", {}).get("tokens_per_sec")
@@ -226,6 +235,7 @@ def summarize_scenarios(scenarios: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "scenario_count": len(scenarios),
         "models": sorted({sc.get("model_key", "") for sc in scenarios}),
+        "status_counts": status_counts,
         "generate_tps_avg": round(sum(tps_vals) / len(tps_vals), 2) if tps_vals else None,
         "generate_tps_max": round(max(tps_vals), 2) if tps_vals else None,
     }
