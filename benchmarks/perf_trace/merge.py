@@ -41,6 +41,17 @@ def _ms(us: int | float | None) -> float | None:
     return round(float(us) / 1000.0, 3)
 
 
+def wave_correlation_key(ev: dict[str, Any]) -> int | None:
+    """RFC-0013 primary key; falls back to deprecated token_idx."""
+    wave_id = ev.get("WaveID", ev.get("wave_id"))
+    if isinstance(wave_id, int) and wave_id >= 0:
+        return wave_id
+    tok = ev.get("token_idx")
+    if isinstance(tok, int) and tok >= 0:
+        return tok
+    return None
+
+
 def aggregate_bottleneck(events: list[dict[str, Any]]) -> dict[str, Any]:
     totals: dict[str, float] = defaultdict(float)
     for ev in events:
@@ -64,15 +75,16 @@ def aggregate_bottleneck(events: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def token_rows(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    by_token: dict[int, dict[str, Any]] = defaultdict(dict)
+    by_wave: dict[int, dict[str, Any]] = defaultdict(dict)
     for ev in events:
         if ev.get("phase") != "decode":
             continue
-        tok = int(ev.get("token_idx", -1))
-        if tok < 0:
+        wave = wave_correlation_key(ev)
+        if wave is None:
             continue
-        row = by_token[tok]
-        row["token"] = tok
+        row = by_wave[wave]
+        row["WaveID"] = wave
+        row["token"] = int(ev.get("token_idx", wave))
         row.setdefault("trace_id", ev.get("trace_id", ""))
         stage = str(ev.get("stage", ""))
         cat = str(ev.get("category", ""))
@@ -105,8 +117,8 @@ def token_rows(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
         elif cat in ("WAIT", "IDLE"):
             row[f"{stage}_wait_ms"] = row.get(f"{stage}_wait_ms", 0.0) + dur_ms
     rows = []
-    for tok in sorted(by_token):
-        row = by_token[tok]
+    for wave in sorted(by_wave):
+        row = by_wave[wave]
         parts = [
             row.get("entry_compute_ms", 0.0),
             row.get("middle_compute_ms", 0.0),

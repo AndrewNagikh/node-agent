@@ -27,7 +27,7 @@ def load_deduped(trace_dir: Path, trace_id: str, node_id: str) -> list[dict[str,
                 continue
             if ev.get("node_id") != node_id:
                 continue
-            key = (ev.get("event"), ev.get("token_idx"), ev.get("ts_us"), ev.get("kind"))
+            key = (ev.get("event"), ev.get("WaveID", ev.get("token_idx")), ev.get("ts_us"), ev.get("kind"))
             if key in seen:
                 continue
             seen.add(key)
@@ -77,24 +77,26 @@ def analyze_trace(trace_dir: Path, trace_id: str) -> dict[str, Any] | None:
             receives.append(ev)
         receives = receives[:n]
         compute = {
-            ev.get("token_idx"): ev
+            (ev.get("WaveID") if isinstance(ev.get("WaveID"), int) and ev.get("WaveID") >= 0 else ev.get("token_idx")): ev
             for ev in win[stage]
             if str(ev.get("event", "")).endswith("COMPUTE_END")
         }
         rows: list[dict[str, Any]] = []
         for recv in receives:
-            tok = recv.get("token_idx")
+            tok = recv.get("WaveID") if isinstance(recv.get("WaveID"), int) and recv.get("WaveID") >= 0 else recv.get("token_idx")
             comp = compute.get(tok)
             dur_us = int(comp.get("dur_us", 0)) if comp else 0
             send_ts = None
             for ev in win[stage]:
-                if ev.get("token_idx") != tok:
+                ev_key = ev.get("WaveID") if isinstance(ev.get("WaveID"), int) and ev.get("WaveID") >= 0 else ev.get("token_idx")
+                if ev_key != tok:
                     continue
                 if ev.get("event") not in ("ENTRY_SEND_END", "HIDDEN_TRANSFER", "MIDDLE_SEND_END"):
                     continue
                 if send_ts is None or ev["ts_us"] > send_ts:
                     send_ts = ev["ts_us"]
             rows.append({
+                "WaveID": recv.get("WaveID"),
                 "token_idx": tok,
                 "recv_us": recv["ts_us"],
                 "compute_ms": dur_us / 1000.0,
@@ -127,7 +129,11 @@ def analyze_trace(trace_dir: Path, trace_id: str) -> dict[str, Any] | None:
     base = ordinals["entry"][0]["recv_us"]
     timeline: list[dict[str, Any]] = []
     for i in range(n):
-        row: dict[str, Any] = {"ordinal": i, "token_idx": ordinals["entry"][i]["token_idx"]}
+        row: dict[str, Any] = {
+            "ordinal": i,
+            "WaveID": ordinals["entry"][i].get("WaveID"),
+            "token_idx": ordinals["entry"][i]["token_idx"],
+        }
         for stage in NODES:
             o = ordinals[stage][i]
             row[f"{stage}_recv_ms"] = round((o["recv_us"] - base) / 1000.0, 2)

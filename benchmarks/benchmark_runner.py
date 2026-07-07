@@ -168,6 +168,34 @@ def ensure_docker_perf_trace_enabled() -> None:
         log("Warning: cluster not ready after perf trace recreate")
 
 
+def ensure_docker_protocol_v2_enabled() -> None:
+    """Recreate Docker cluster (v2 is default in compose since RFC-0013 Phase 6)."""
+    compose_dir = docker_compose_dir()
+    if not (compose_dir / "docker-compose.yml").is_file():
+        return
+    log("Recreating Docker cluster with runtime v2 defaults")
+    env = os.environ.copy()
+    env.setdefault("DIST_RUNTIME_PROTOCOL_V2", "1")
+    env.setdefault("DIST_RUNTIME_ENTRY_QUEUE", "1")
+    env.setdefault("DIST_RUNTIME_STAGE_QUEUE", "1")
+    env.setdefault("DIST_RUNTIME_CLIENT_PIPELINE", "1")
+    env["DIST_PERF_TRACE"] = "1"
+    env["DIST_PERF_TRACE_GGML"] = "1"
+    subprocess.run(
+        [
+            "docker", "compose", "up", "-d", "--force-recreate",
+            "orchestrator", "node-a", "node-b", "node-c",
+        ],
+        cwd=compose_dir,
+        env=env,
+        check=False,
+    )
+    min_nodes = 3
+    ok, _ = wait_cluster(min_nodes, int(os.environ.get("BENCHMARK_WAIT_CLUSTER_S", "180")))
+    if not ok:
+        log("Warning: cluster not ready after protocol v2 recreate")
+
+
 def purge_model_cluster(model_id: str, keep_manifest: bool = False) -> tuple[int, Any]:
     """Clear layer store + registry install state for one model on all nodes."""
     return http(
@@ -1245,6 +1273,16 @@ def main() -> int:
         profile["perf_trace"] = True
         if os.environ.get("BENCHMARK_DOCKER", "1") == "1" and os.environ.get("BENCHMARK_SKIP_DOCKER_PERF_RECREATE", "0") != "1":
             ensure_docker_perf_trace_enabled()
+
+    if profile.get("protocol_v2"):
+        os.environ["DIST_RUNTIME_PROTOCOL_V2"] = "1"
+        os.environ["DIST_RUNTIME_ENTRY_QUEUE"] = "1"
+        os.environ["DIST_RUNTIME_STAGE_QUEUE"] = "1"
+        os.environ["DIST_PERF_TRACE"] = "1"
+        os.environ["DIST_PERF_TRACE_GGML"] = "1"
+        profile["perf_trace"] = True
+        if os.environ.get("BENCHMARK_DOCKER", "1") == "1" and os.environ.get("BENCHMARK_SKIP_DOCKER_RECREATE", "0") != "1":
+            ensure_docker_protocol_v2_enabled()
 
     load_hf_token()
     run_id = make_run_id()

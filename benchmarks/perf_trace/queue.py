@@ -10,7 +10,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from perf_trace.merge import load_jsonl, write_csv
+from perf_trace.merge import load_jsonl, write_csv, wave_correlation_key
 
 STAGES = ("entry", "middle", "final")
 
@@ -20,16 +20,17 @@ def queue_rows(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for ev in events:
         if ev.get("phase") != "decode" or ev.get("event") != "QUEUE_DEPTH":
             continue
-        tok = int(ev.get("token_idx", -1))
-        if tok < 0:
+        wave = wave_correlation_key(ev)
+        if wave is None:
             continue
         stage = str(ev.get("stage", ""))
         if stage not in STAGES:
             continue
         attrs = ev.get("attrs") if isinstance(ev.get("attrs"), dict) else {}
         depth = attrs.get("depth")
-        row = by_token[tok]
-        row["token"] = tok
+        row = by_token[wave]
+        row["WaveID"] = wave
+        row["token"] = int(ev.get("token_idx", wave))
         row.setdefault("trace_id", ev.get("trace_id", ""))
         row[f"{stage}_queue_depth"] = depth
     return [by_token[tok] for tok in sorted(by_token)]

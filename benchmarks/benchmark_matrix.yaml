@@ -154,6 +154,32 @@ profiles:
     stop_if_not_fits: true
     perf_trace: true
 
+  # RFC-0013 — protocol v2 + queues on 3-node Docker (Llama 3.2 1B)
+  rfc0013_docker:
+    mode: task12
+    models:
+      - llama3_1b
+    cluster_sizes:
+      - 3
+    prompt_lengths:
+      - 16
+    generate_tokens:
+      - 16
+    reset_before_run: true
+    warmup_tokens: 2
+    sync_timeout_s: 1800
+    sync_max_rounds: 8
+    wait_cluster_timeout_s: 180
+    session_create_timeout_s: 900
+    release_workers_between_models: false
+    release_workers_before_run: true
+    purge_model_after_scenario: false
+    restart_docker_nodes_between_models: false
+    inter_scenario_cooldown_s: 5
+    stop_if_not_fits: true
+    perf_trace: true
+    protocol_v2: true
+
   # Homelab LAN — full catalog on physical 3-node cluster
   homelab_full:
     mode: homelab
