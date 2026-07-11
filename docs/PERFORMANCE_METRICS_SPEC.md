@@ -67,12 +67,14 @@ All report TPS figures MUST derive from this field or explicitly cite trace-deri
 |-------|-------|
 | **Meaning** | Minimum serial time for one token through the 3-stage pipeline |
 | **Formula (wall)** | `final_recv_us + final_compute_us − entry_recv_us` (per WaveID) |
-| **Formula (compute sum)** | `entry_compute_ms + middle_compute_ms + final_compute_ms` (fallback) |
-| **Events** | `ENTRY_RECEIVE`, `FINAL_RECEIVE`, `*_COMPUTE_END` per stage |
+| **Formula (serial)** | `entry_compute + transfer_ab + middle_compute + transfer_bc + final_compute + sampling` |
+| **Formula (compute sum)** | `entry_compute_ms + middle_compute_ms + final_compute_ms` (partial fallback) |
+| **Effective path** | Wall when clocks align; serial span sum when cross-node `steady_clock` skew detected (`wall > 5× serial` or `wall > 120s`) |
+| **Events** | `ENTRY_RECEIVE`, `FINAL_RECEIVE`, `*_COMPUTE_END`, `HIDDEN_TRANSFER`, `SAMPLER_END` per stage |
 | **Required trace** | Full decode chain on entry, middle, final for same `trace_id` + `WaveID` |
 | **UNKNOWN when** | Any stage missing decode-phase spans for the trace |
 
-Report: `avg_wall_critical_path_ms` in `validation.json`.
+Report: `avg_effective_critical_path_ms`, `clock_skew_detected` in `validation.json`. `avg_wall_critical_path_ms` excludes skewed waves.
 
 ---
 
@@ -81,8 +83,8 @@ Report: `avg_wall_critical_path_ms` in `validation.json`.
 | Field | Value |
 |-------|-------|
 | **Meaning** | Theoretical max TPS if bubble = 0 |
-| **Formula** | `ceiling_tps = 1000 / avg_wall_critical_path_ms` |
-| **Fallback** | `1000 / avg(entry+middle+final compute_ms)` — marked as fallback in validation output |
+| **Formula** | `ceiling_tps = 1000 / avg_effective_critical_path_ms` |
+| **Fallback order** | wall clock → serial span sum (clock skew) → compute-only sum |
 | **Required trace** | Same as critical path |
 | **UNKNOWN when** | Critical path not computable |
 
@@ -95,7 +97,7 @@ Ceiling MUST NOT be hand-estimated in reports.
 | Field | Value |
 |-------|-------|
 | **Meaning** | Protocol / scheduling idle as % of inter-token period |
-| **Formula** | `bubble_ms = entry_period_ms − wall_critical_path_ms` |
+| **Formula** | `bubble_ms = entry_period_ms − effective_critical_path_ms` |
 | | `entry_period_ms = entry_recv[wave N] − entry_recv[wave N−1]` |
 | | `bubble_pct = bubble_ms / entry_period_ms × 100` |
 | **Events** | `ENTRY_RECEIVE` (consecutive waves), full critical path spans |
@@ -212,4 +214,4 @@ Task 15 (Runtime Performance Optimization) begins only after the above.
 - RFC-0013 §19 — bubble / period / critical path definitions
 - RFC-0013 §29 — acceptance criteria gates
 - `benchmarks/perf_trace/metric_validation.py` — implementation
-- `docs/TASK_13_1_PERFORMANCE_INSTRUMENTATION_VALIDATION.md` — task checklist
+- `docs/archive/TASK_13_1_PERFORMANCE_INSTRUMENTATION_VALIDATION.md` — task checklist

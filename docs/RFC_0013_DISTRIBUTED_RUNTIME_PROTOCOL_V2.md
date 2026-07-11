@@ -98,7 +98,7 @@ Task 12 pipeline stall analysis (Docker, TinyLlama, 3-node CPU) measured the fol
 
 **Conclusion:** The bottleneck is protocol architecture, not network bandwidth or model compute.
 
-Evidence: [`docs/TASK_12_PIPELINE_STALL_ANALYSIS_DOCKER.md`](TASK_12_PIPELINE_STALL_ANALYSIS_DOCKER.md), `logs/perf_trace/docker_verify_20260707_151625/`.
+Evidence: [`docs/archive/TASK_12_PIPELINE_STALL_ANALYSIS_DOCKER.md`](TASK_12_PIPELINE_STALL_ANALYSIS_DOCKER.md), `logs/perf_trace/docker_verify_20260707_151625/`.
 
 ---
 
@@ -973,12 +973,12 @@ Example event types for implementation planning. Byte layout and transport bindi
 | Single-request worker loop | `split_gen3_a.cpp:253–261` |
 | Queue depth counter design | `split_gen3_a.cpp:316–325`, `407–409` |
 | Wire format v1 | `transport/split_tcp_wire.h` |
-| 54.4 ms period, 40.8 ms bubble | `docs/TASK_12_PIPELINE_STALL_ANALYSIS_DOCKER.md` |
-| Token 17 orchestrator wait | `docs/TASK_12_TOKEN_17_TIMELINE.md` |
-| token_idx correlation failure | `docs/TASK_12_PIPELINE_STALL_ANALYSIS_DOCKER.md` §Methodology |
-| Layer-first validation | `docs/TASK_11_FULL_METRICS_AND_ARCHITECTURE_REPORT_20260706.md` |
+| 54.4 ms period, 40.8 ms bubble | `docs/archive/TASK_12_PIPELINE_STALL_ANALYSIS_DOCKER.md` |
+| Token 17 orchestrator wait | `docs/archive/TASK_12_TOKEN_17_TIMELINE.md` |
+| token_idx correlation failure | `docs/archive/TASK_12_PIPELINE_STALL_ANALYSIS_DOCKER.md` §Methodology |
+| Layer-first validation | `docs/archive/TASK_11_FULL_METRICS_AND_ARCHITECTURE_REPORT_20260706.md` |
 | worker_gguf_bytes = 0 | Task 11 benchmark matrix |
-| Profiler specification | `docs/TASK_12_RUNTIME_PERFORMANCE_PROFILER.md` |
+| Profiler specification | `docs/archive/TASK_12_RUNTIME_PERFORMANCE_PROFILER.md` |
 
 Trace artifacts: `logs/perf_trace/docker_verify_20260707_151625/`.
 
