@@ -199,6 +199,53 @@ def build_markdown(document: dict[str, Any]) -> str:
             parts = ", ".join(f"{k} {v}%" for k, v in sorted(buckets.items(), key=lambda x: -x[1]))
             lines.extend(["", f"**Decode buckets:** {parts}"])
 
+    validation = perf.get("validation") if isinstance(perf, dict) else None
+    if isinstance(validation, dict):
+        lines.extend([
+            "",
+            "## Task 14 Runtime Observability",
+            "",
+            f"- Overall: **{validation.get('overall', 'UNKNOWN')}**",
+            f"- Trace: `{validation.get('trace_id', '—')}`",
+            "",
+            "| Check | Status | Reason |",
+            "|-------|--------|--------|",
+        ])
+        for row in validation.get("checks", []):
+            reason = row.get("reason") or "—"
+            lines.append(f"| {row.get('name', '')} | {row.get('status', '')} | {reason} |")
+        metrics = validation.get("metrics") or {}
+
+        def _metric_line(label: str, doc: dict[str, Any], value_keys: tuple[str, ...]) -> None:
+            status = doc.get("status", "UNKNOWN")
+            if status == "UNKNOWN":
+                return
+            val = None
+            for key in value_keys:
+                if doc.get(key) is not None:
+                    val = doc.get(key)
+                    break
+            val_s = "—" if val is None else str(val)
+            lines.append(f"- {label}: **{val_s}** ({status})")
+
+        lines.append("")
+        _metric_line("TPS (source of truth)", metrics.get("tps") or {}, ("value",))
+        _metric_line("Ceiling TPS", metrics.get("ceiling_tps") or {}, ("value",))
+        _metric_line("Bubble %", metrics.get("bubble") or {}, ("bubble_pct",))
+        crit = metrics.get("critical_path") or {}
+        if crit.get("status") != "UNKNOWN":
+            cp = crit.get("avg_wall_critical_path_ms") or crit.get("avg_sum_compute_ms")
+            lines.append(f"- Critical path (ms/token): **{cp if cp is not None else '—'}** ({crit.get('status', '—')})")
+        cross = metrics.get("tps_vs_ceiling") or {}
+        if cross.get("status") not in (None, "UNKNOWN", "SKIP"):
+            lines.append(f"- TPS vs ceiling: **{cross.get('status', '—')}**")
+        if validation.get("overall") == "INVALID":
+            lines.extend([
+                "",
+                "> **METRIC INVALID** — report throughput/bubble figures are inconsistent. "
+                "See `validation.md` before drawing performance conclusions.",
+            ])
+
     lines.append("")
     return "\n".join(lines)
 

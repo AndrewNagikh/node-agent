@@ -14,6 +14,15 @@ from perf_trace.ggml import merge_ggml
 from perf_trace.html_timeline import write_timeline
 from perf_trace.install import merge_install_trace
 from perf_trace.merge import load_jsonl, merge_trace_dir
+from perf_trace.metric_validation import (
+    STAGES,
+    filter_trace,
+    load_raw_events,
+    pick_primary_trace_id,
+    stage_span_coverage,
+    write_validation,
+)
+from perf_trace.observability import write_observability_artifacts
 from perf_trace.queue import merge_queue
 from perf_trace.regression import DEFAULT_BASELINE_DIR, run_regression
 from perf_trace.session import merge_session_trace
@@ -42,6 +51,9 @@ def run_postprocess(
         update_baseline: bool = False,
         regression: bool = True,
         timeline: bool = True,
+        results_path: Path | None = None,
+        generate_timing: dict[str, Any] | None = None,
+        trace_id: str | None = None,
 ) -> dict[str, Any]:
     raw_dir = Path(raw_dir)
     out_root = Path(out_root)
@@ -91,6 +103,30 @@ def run_postprocess(
     if timeline:
         write_timeline(analysis, timeline_path, ttft_dir=ttft_analysis)
 
+    raw_events = load_raw_events(raw_dir)
+    primary_tid = pick_primary_trace_id(raw_events, prefer=trace_id)
+    trace_events = filter_trace(raw_events, primary_tid) if primary_tid else raw_events
+    all_stages_pass = all(
+        stage_span_coverage(trace_events, stage)["status"] == "PASS"
+        for stage in STAGES
+    )
+
+    observability_doc = write_observability_artifacts(
+        raw_dir,
+        analysis,
+        trace_id=primary_tid,
+        all_stages_pass=all_stages_pass,
+    )
+
+    validation_doc = write_validation(
+        raw_dir,
+        analysis,
+        trace_id=trace_id,
+        generate_timing=generate_timing,
+        results_path=results_path,
+        observability=observability_doc,
+    )
+
     return {
         "raw_files": merged_count,
         "analysis_dir": str(analysis),
@@ -104,6 +140,14 @@ def run_postprocess(
         "install": install_doc.get("summary") if isinstance(install_doc, dict) else None,
         "session": session_doc.get("summary") if isinstance(session_doc, dict) else None,
         "ttft": ttft_doc.get("summary") if isinstance(ttft_doc, dict) else None,
+        "validation": validation_doc,
+        "validation_overall": validation_doc.get("overall"),
+        "observability": {
+            "trace_id": observability_doc.get("trace_id"),
+            "timeline_events": observability_doc.get("timeline", {}).get("event_count"),
+            "critical_path_ms": observability_doc.get("critical_path", {}).get("avg_serial_critical_path_ms"),
+            "bubble_status": observability_doc.get("bubble", {}).get("status"),
+        },
     }
 
 
@@ -119,6 +163,8 @@ def main() -> int:
     parser.add_argument("--update-baseline", action="store_true")
     parser.add_argument("--no-regression", action="store_true")
     parser.add_argument("--no-timeline", action="store_true")
+    parser.add_argument("--results", type=Path, help="benchmark results.json for TPS source of truth")
+    parser.add_argument("--trace-id", default="", help="Primary decode trace id")
     args = parser.parse_args()
 
     doc = run_postprocess(
@@ -132,6 +178,8 @@ def main() -> int:
         update_baseline=args.update_baseline,
         regression=not args.no_regression,
         timeline=not args.no_timeline,
+        results_path=args.results,
+        trace_id=args.trace_id or None,
     )
     print(json.dumps(doc, indent=2))
     return 0

@@ -780,6 +780,16 @@ def run_perf_trace_bundle(
     model_key = str(primary.get("model_key", "tinyllama"))
     cluster_size = int(primary.get("cluster_size_target", cluster.get("node_count", 3)))
 
+    generate_timing: dict[str, Any] | None = None
+    for st in primary.get("stages", []):
+        if st.get("name") == "generate":
+            metrics = st.get("metrics") or {}
+            timing = metrics.get("timing")
+            if isinstance(timing, dict):
+                generate_timing = dict(timing)
+                generate_timing.setdefault("generated_tokens", metrics.get("token_count"))
+            break
+
     doc = run_postprocess(
         raw_dir,
         out_dir / "perf_trace",
@@ -787,7 +797,13 @@ def run_perf_trace_bundle(
         model=model_key,
         cluster_size=cluster_size,
         pin_if_missing=pin_if_missing,
+        results_path=out_dir / "results.json",
+        generate_timing=generate_timing,
+        trace_id=str((generate_timing or {}).get("trace_id") or "") or None,
     )
+    if doc.get("validation_overall"):
+        log(f"Perf trace: validation -> {doc.get('validation_overall')} "
+            f"({out_dir / 'perf_trace' / 'analysis' / 'validation.md'})")
     log(f"Perf trace: analysis -> {doc.get('analysis_dir')}")
     if doc.get("timeline_html"):
         log(f"Perf trace: timeline -> {doc['timeline_html']}")
