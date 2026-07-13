@@ -84,7 +84,10 @@ def collect_docker_traces(
             remote = remote.strip()
             if not remote:
                 continue
-            base = Path(remote).name
+            # Keep the trace subdirs in the name: decode/ and ttft/ hold files
+            # with identical basenames that would otherwise overwrite each other.
+            rel = remote.removeprefix("/data/models/perf_trace/")
+            base = rel.replace("/", "_")
             out_path = dest / f"{ctr}_{base}"
             cp = subprocess.run(
                 ["docker", "cp", f"{ctr}:{remote}", str(out_path)],

@@ -1,7 +1,22 @@
 # Task 17.1 — Orchestrator Bubble Closure (Homelab)
 
 **Type:** Investigation → Implementation (two gated phases)
-**Status:** Planned
+**Status:** Phase B landed on Docker — **root cause was TCP Nagle/delayed-ACK**; homelab validation pending
+
+> **Phase B result (2026-07-13): the Docker bubble was the TCP delayed-ACK timer, not scheduler logic.**
+> The Phase A attribution signature (two ~41 ms waits per token; v1 bubble measured at exactly 40.8 ms in Task 12) matched the classic Nagle + delayed-ACK interaction for small-message request/response ping-pong. The transport never set `TCP_NODELAY`. Setting it on every connected/accepted socket (`split_tcp_wire.cpp`, opt-out `DIST_TCP_NODELAY=0`):
+>
+> | Metric (Docker CPU, llama3-1b, 16 tok) | Before | After |
+> |---|---|---|
+> | Decode TPS | 11.4 | **60.7** (x5.3) |
+> | Period | 82.1 ms | 16.3 ms |
+> | `ack_wait` / `complete_wait` | 41.0 / 41.0 ms | 0.05 / 0.007 ms |
+> | `token_wait` (pipeline work) | 0.01 ms | 15.8 ms |
+> | **Bubble** | 71.2% | **2.5% — RFC-0013 §28 gate (<10%) PASS for the first time** |
+>
+> Determinism: identical token sequences across repeated runs (PASS). Attribution after fix: 99.4% of period. The v2 client pipeline now behaves as designed — the client is genuinely waiting on pipeline compute (`token_wait`), not on protocol stalls.
+>
+> **Homelab implication:** the homelab 11.7 ms bubble (Task 16) likely contains the same component in macOS/Windows delayed-ACK form; the homelab validation run must re-measure bubble and TPS with this fix before any further Phase B scheduler work is considered.
 **Parent:** Research 17 — `docs/DISTRIBUTED_INFERENCE_PERFORMANCE_STUDY.md` (roadmap R1)
 **Depends on:** RFC-0013 Phases 3–6 (built, default-on since Task 13.6)
 **Expected gain:** 25.8 → ~34–37 tok/s (**+43% max**) — the single largest measured lever
