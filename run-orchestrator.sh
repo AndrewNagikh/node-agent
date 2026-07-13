@@ -7,29 +7,37 @@ source "$ROOT/scripts/common.sh"
 
 usage() {
   cat <<EOF
-usage: $0 [options]
+usage: $0 [KEY=value ...] [options]
 
-Start the distributed orchestrator.
+Start the distributed orchestrator. With nodes.conf present, no arguments
+are needed at all -- the listen port comes from ORCHESTRATOR_PORT there.
 
-Environment:
+Environment / KEY=value args:
   MODEL     optional path to local GGUF (legacy; layer-first mode omits this)
-  PORT      listen port (default: 9000)
+  PORT      listen port (default: nodes.conf ORCHESTRATOR_PORT, else 9000)
   HF_TOKEN  Hugging Face token (faster downloads; or ~/.cache/huggingface/token)
 
-Options:
+Options (equivalent --flag form, still supported):
   --model PATH
   --port PORT
   --build / --no-build
   -h, --help
 
-Example:
+Examples:
+  ./run-orchestrator.sh
+  ./run-orchestrator.sh PORT=9000
   $0 --model ~/models/llama-3.2-1b-instruct-q4_k_m.gguf
 EOF
 }
 
+node_agent_load_topology "$ROOT"
+
 MODEL="${MODEL:-}"
-PORT="${PORT:-9000}"
+PORT="${PORT:-${ORCHESTRATOR_PORT:-9000}}"
 DO_BUILD=true
+
+node_agent_parse_kv_args "MODEL PORT" "$@"
+set -- "${NODE_AGENT_KV_REMAINING[@]}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in

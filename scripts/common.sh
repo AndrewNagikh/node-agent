@@ -1,6 +1,77 @@
 #!/usr/bin/env bash
 # Shared helpers for run-agent.sh and run-orchestrator.sh
 
+# Load nodes.conf (or nodes.conf.example as a fallback) so launches only
+# need NODE_ID. Only known ORCHESTRATOR_*/NODE_*_HOST/NODE_*_PORT keys are
+# read from the file; anything already set in the environment wins.
+node_agent_load_topology() {
+  local root="$1"
+  local conf="$root/nodes.conf"
+  [[ -f "$conf" ]] || conf="$root/nodes.conf.example"
+  [[ -f "$conf" ]] || return 0
+
+  local line key val
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%%#*}"
+    line="$(echo "$line" | xargs)"
+    [[ -z "$line" ]] && continue
+    [[ "$line" != *=* ]] && continue
+    key="${line%%=*}"
+    val="${line#*=}"
+    case "$key" in
+      ORCHESTRATOR_HOST|ORCHESTRATOR_PORT|NODE_A_HOST|NODE_A_PORT|NODE_B_HOST|NODE_B_PORT|NODE_C_HOST|NODE_C_PORT)
+        [[ -z "${!key:-}" ]] && printf -v "$key" '%s' "$val"
+        ;;
+    esac
+  done < "$conf"
+}
+
+node_agent_topology_orchestrator_url() {
+  if [[ -n "${ORCHESTRATOR_HOST:-}" ]]; then
+    echo "http://${ORCHESTRATOR_HOST}:${ORCHESTRATOR_PORT:-9000}"
+  fi
+}
+
+node_agent_topology_node_host() {
+  case "${1:-}" in
+    node-a) echo "${NODE_A_HOST:-}" ;;
+    node-b) echo "${NODE_B_HOST:-}" ;;
+    node-c) echo "${NODE_C_HOST:-}" ;;
+  esac
+}
+
+node_agent_topology_node_port() {
+  case "${1:-}" in
+    node-a) echo "${NODE_A_PORT:-}" ;;
+    node-b) echo "${NODE_B_PORT:-}" ;;
+    node-c) echo "${NODE_C_PORT:-}" ;;
+  esac
+}
+
+# Parse `KEY=value` positional args (make-style), e.g. `NODE_ID=node-a`, in
+# addition to `--flag value` and pre-set env vars. Only whitelisted keys are
+# accepted (space-separated list in $1). Writes matches directly into shell
+# vars of the same name; leaves everything else in the global array
+# NODE_AGENT_KV_REMAINING for the caller's normal --flag parser to consume.
+# (No `local -n` nameref: macOS ships bash 3.2, which predates it.)
+node_agent_parse_kv_args() {
+  local allowed="$1"
+  shift
+  NODE_AGENT_KV_REMAINING=()
+  local arg key val
+  for arg in "$@"; do
+    if [[ "$arg" == *=* && "${arg%%=*}" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
+      key="${arg%%=*}"
+      val="${arg#*=}"
+      if [[ " $allowed " == *" $key "* ]]; then
+        printf -v "$key" '%s' "$val"
+        continue
+      fi
+    fi
+    NODE_AGENT_KV_REMAINING+=("$arg")
+  done
+}
+
 node_agent_is_wsl() {
   grep -qi microsoft /proc/version 2>/dev/null
 }
@@ -44,6 +115,12 @@ node_agent_detect_lan_ip() {
 }
 
 node_agent_default_port() {
+  local from_topology
+  from_topology="$(node_agent_topology_node_port "${1:-}")"
+  if [[ -n "$from_topology" ]]; then
+    echo "$from_topology"
+    return
+  fi
   case "${1:-}" in
     node-a) echo 9001 ;;
     node-b) echo 9002 ;;

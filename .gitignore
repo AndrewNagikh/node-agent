@@ -4,3 +4,4 @@ llama.cpp/.cache/
 state/
 logs/
 .env
+nodes.conf

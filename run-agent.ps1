@@ -1,8 +1,13 @@
 # Start native Windows node_agent (full pipeline support).
 #
-# Usage:
-#   $env:ORCHESTRATOR = "http://192.168.50.154:9000"
+# With nodes.conf present (copy from nodes.conf.example and edit for your
+# LAN), the only thing you need is the node id, in either style:
+#
+#   .\run-agent.ps1 NodeId=node-c
 #   .\run-agent.ps1 -NodeId node-c -Cuda
+#
+# Everything else (Orchestrator, AdvertiseHost, Port) falls back to
+# nodes.conf, then env vars, then the args below.
 #
 # First-time setup: scripts\setup-windows.ps1
 
@@ -15,11 +20,76 @@ param(
     [switch]$Build,
     [switch]$Cuda,
     [switch]$Firewall,
-    [switch]$ConfigureFirewallOnly
+    [switch]$ConfigureFirewallOnly,
+    # Accepts make-style KEY=value tokens, e.g. NodeId=node-c or
+    # NODE_ID=node-c, alongside the normal -NodeId node-c PowerShell form.
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$Rest
 )
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+function Apply-KvArgs {
+    param([string[]]$Tokens)
+    $map = @{
+        'NodeId' = 'NodeId'; 'NODE_ID' = 'NodeId'
+        'Orchestrator' = 'Orchestrator'; 'ORCHESTRATOR' = 'Orchestrator'
+        'AdvertiseHost' = 'AdvertiseHost'; 'ADVERTISE_HOST' = 'AdvertiseHost'
+        'ModelsDir' = 'ModelsDir'; 'MODELS_DIR' = 'ModelsDir'
+        'Port' = 'Port'; 'PORT' = 'Port'
+    }
+    foreach ($tok in $Tokens) {
+        if ($tok -match '^([A-Za-z_][A-Za-z0-9_]*)=(.*)$') {
+            $k = $Matches[1]; $v = $Matches[2]
+            if ($map.ContainsKey($k)) {
+                if ($map[$k] -eq 'Port') {
+                    Set-Variable -Name Port -Value ([int]$v) -Scope Script
+                } else {
+                    Set-Variable -Name $map[$k] -Value $v -Scope Script
+                }
+            } else {
+                Write-Warning "run-agent: ignoring unknown KEY=value arg '$tok'"
+            }
+        } else {
+            Write-Warning "run-agent: ignoring unrecognized argument '$tok'"
+        }
+    }
+}
+
+function Load-Topology {
+    param([string]$RootDir)
+    $conf = Join-Path $RootDir "nodes.conf"
+    if (-not (Test-Path $conf)) { $conf = Join-Path $RootDir "nodes.conf.example" }
+    if (-not (Test-Path $conf)) { return @{} }
+    $known = @("ORCHESTRATOR_HOST", "ORCHESTRATOR_PORT",
+               "NODE_A_HOST", "NODE_A_PORT", "NODE_B_HOST", "NODE_B_PORT",
+               "NODE_C_HOST", "NODE_C_PORT")
+    $topo = @{}
+    Get-Content $conf | ForEach-Object {
+        $line = ($_ -replace '#.*$', '').Trim()
+        if (-not $line -or $line -notmatch '=') { return }
+        $eq = $line.IndexOf('=')
+        $key = $line.Substring(0, $eq).Trim()
+        $val = $line.Substring($eq + 1).Trim()
+        if ($known -contains $key) { $topo[$key] = $val }
+    }
+    return $topo
+}
+
+if ($Rest) { Apply-KvArgs -Tokens $Rest }
+$Topology = Load-Topology -RootDir $Root
+
+if (-not $Orchestrator -and $Topology["ORCHESTRATOR_HOST"]) {
+    $orchPort = if ($Topology["ORCHESTRATOR_PORT"]) { $Topology["ORCHESTRATOR_PORT"] } else { "9000" }
+    $Orchestrator = "http://$($Topology["ORCHESTRATOR_HOST"]):$orchPort"
+}
+if (-not $AdvertiseHost -and $Topology["$($NodeId.ToUpper() -replace '-', '_')_HOST"]) {
+    $AdvertiseHost = $Topology["$($NodeId.ToUpper() -replace '-', '_')_HOST"]
+}
+if ($Port -eq 0 -and $Topology["$($NodeId.ToUpper() -replace '-', '_')_PORT"]) {
+    $Port = [int]$Topology["$($NodeId.ToUpper() -replace '-', '_')_PORT"]
+}
 
 function Resolve-NodeAgentBinary {
     $ninjaBin = Join-Path $Root "llama.cpp\build\bin\node_agent.exe"

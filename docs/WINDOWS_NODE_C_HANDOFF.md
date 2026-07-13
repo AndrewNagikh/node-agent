@@ -99,6 +99,14 @@ Inbound TCP:
 
 ### 5. Запуск node-c
 
+С `nodes.conf` в корне репо (см. `nodes.conf.example`, топология уже совпадает с таблицей выше) достаточно:
+
+```powershell
+.\run-agent.ps1 NodeId=node-c
+```
+
+Без `nodes.conf` — вручную:
+
 ```powershell
 $env:ORCHESTRATOR = "http://192.168.50.154:9000"
 # при необходимости явно:

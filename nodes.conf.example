@@ -1,0 +1,25 @@
+# Homelab cluster topology defaults for run-agent.sh / run-agent.ps1 / run-orchestrator.sh.
+#
+# Copy to nodes.conf (gitignored) and edit for your LAN:
+#   cp nodes.conf.example nodes.conf
+#
+# With this file present, launches only need the node id:
+#   ./run-agent.sh NODE_ID=node-a
+#   ./run-agent.sh NODE_ID=node-b
+#   .\run-agent.ps1 NodeId=node-c        # Windows
+#   ./run-orchestrator.sh
+#
+# Everything here can still be overridden per-run, e.g.:
+#   ./run-agent.sh NODE_ID=node-a ORCHESTRATOR=http://10.0.0.5:9000
+
+ORCHESTRATOR_HOST=192.168.50.154
+ORCHESTRATOR_PORT=9000
+
+NODE_A_HOST=192.168.50.42
+NODE_A_PORT=9001
+
+NODE_B_HOST=192.168.50.254
+NODE_B_PORT=9002
+
+NODE_C_HOST=192.168.50.51
+NODE_C_PORT=9003

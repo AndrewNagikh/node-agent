@@ -37,31 +37,50 @@ git submodule update --init --recursive
 ./build.sh all      # + orchestrator
 ```
 
-### Homelab (orchestrator + node-a)
+### Topology file (one-time, per cluster)
+
+Copy `nodes.conf.example` to `nodes.conf` and fill in your LAN IPs/ports. With
+it present, every launch only needs a node id — no repeating
+`ORCHESTRATOR=... ADVERTISE_HOST=...` on every command:
+
+```bash
+cp nodes.conf.example nodes.conf
+$EDITOR nodes.conf   # ORCHESTRATOR_HOST, NODE_A_HOST, NODE_B_HOST, NODE_C_HOST, ports
+```
+
+### Homelab (orchestrator)
 
 ```bash
 ./run-orchestrator.sh
-
-# other terminal
-ORCHESTRATOR=http://127.0.0.1:9000 NODE_ID=node-a ./run-agent.sh
 ```
 
-### Mac (node-b)
+### node-a (Mac)
 
 ```bash
-ORCHESTRATOR=http://192.168.50.154:9000 NODE_ID=node-b ./run-agent.sh
+./run-agent.sh NODE_ID=node-a
 ```
 
-### Windows WSL (node-c, NVIDIA)
+### node-b (Mac)
 
 ```bash
-ORCHESTRATOR=http://192.168.50.154:9000 NODE_ID=node-c ./run-agent.sh
+./run-agent.sh NODE_ID=node-b
 ```
+
+### node-c (Windows, native — see `docs/WINDOWS_NODE_C_HANDOFF.md`)
+
+```powershell
+.\run-agent.ps1 NodeId=node-c
+```
+
+Both `run-agent.sh` and `run-agent.ps1` accept `KEY=value` args (e.g.
+`NODE_ID=node-a`, `ORCHESTRATOR=http://host:9000`) alongside the classic
+`--flag value` / env-var forms — anything not in `nodes.conf` or passed
+explicitly falls back to auto-detection.
 
 `run-agent.sh` auto-detects: LAN IP, model path, GPU backend (via build), benchmark score.
 
 Set `MODEL=/path/to/model.gguf` if auto-find fails.  
-Set `ADVERTISE_HOST=...` if IP detection is wrong.  
+Set `ADVERTISE_HOST=...` if IP detection is wrong (or nodes.conf is wrong for that machine).  
 `REBENCHMARK=1` to force re-benchmark.
 
 WSL: script prints a Windows `portproxy` hint on startup.

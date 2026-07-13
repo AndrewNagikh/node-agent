@@ -7,22 +7,28 @@ source "$ROOT/scripts/common.sh"
 
 usage() {
   cat <<EOF
-usage: $0 [options]
+usage: $0 [NODE_ID=node-a] [KEY=value ...] [options]
 
 Start a distributed node agent (auto-detects GPU at build time, benchmarks on startup).
 
-Environment (optional):
-  MODEL            optional local GGUF (legacy; layer-first mode omits this)
-  MODELS_DIR       per-node layer store directory
-  ORCHESTRATOR     orchestrator URL, e.g. http://192.168.50.154:9000
-  NODE_ID          node-a | node-b | node-c  (default: node-a)
-  PORT             HTTP listen port (default: by NODE_ID)
-  ADVERTISE_HOST   LAN IP for other machines (auto-detected if unset)
-  REBENCHMARK=1    force re-run benchmark
-  VERIFY_MATERIALIZATION=1  verify layer store before worker GGUF assembly
-  HF_TOKEN         Hugging Face token (faster downloads; or ~/.cache/huggingface/token)
+With nodes.conf present (copy from nodes.conf.example and edit for your LAN),
+the only thing you need per machine is the node id:
 
-Options:
+  ./run-agent.sh NODE_ID=node-a
+  ./run-agent.sh NODE_ID=node-b
+  ./run-agent.sh NODE_ID=node-c
+
+KEY=value args (any can be omitted; falls back to nodes.conf, then env, then default):
+  NODE_ID=node-a|node-b|node-c   (default: node-a)
+  ORCHESTRATOR=http://host:9000
+  PORT=9001
+  ADVERTISE_HOST=192.168.1.10
+  MODELS_DIR=/path/to/store
+  MODEL=/path/to/model.gguf      (legacy; layer-first mode omits this)
+  REBENCHMARK=1
+  VERIFY_MATERIALIZATION=1
+
+Options (equivalent --flag form, still supported):
   --model PATH
   --orchestrator URL
   --node-id ID
@@ -36,10 +42,14 @@ Options:
   -h, --help
 
 Examples:
+  ./run-agent.sh NODE_ID=node-b
+  ./run-agent.sh NODE_ID=node-c REBENCHMARK=1
   ORCHESTRATOR=http://192.168.50.154:9000 NODE_ID=node-b $0
   $0 --orchestrator http://192.168.50.154:9000 --node-id node-c --rebenchmark
 EOF
 }
+
+node_agent_load_topology "$ROOT"
 
 MODEL="${MODEL:-}"
 ORCHESTRATOR="${ORCHESTRATOR:-}"
@@ -50,6 +60,11 @@ MODELS_DIR="${MODELS_DIR:-}"
 REBENCHMARK="${REBENCHMARK:-false}"
 VERIFY_MATERIALIZATION="${VERIFY_MATERIALIZATION:-false}"
 DO_BUILD=true
+
+node_agent_parse_kv_args \
+  "MODEL ORCHESTRATOR NODE_ID PORT ADVERTISE_HOST MODELS_DIR REBENCHMARK VERIFY_MATERIALIZATION" \
+  "$@"
+set -- "${NODE_AGENT_KV_REMAINING[@]}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -69,7 +84,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$ORCHESTRATOR" ]]; then
-  echo "run-agent: set --orchestrator or ORCHESTRATOR env" >&2
+  ORCHESTRATOR="$(node_agent_topology_orchestrator_url)"
+fi
+if [[ -z "$ORCHESTRATOR" ]]; then
+  echo "run-agent: set NODE_ID=... plus nodes.conf, or pass ORCHESTRATOR=http://host:9000" >&2
   usage
   exit 1
 fi
@@ -79,6 +97,9 @@ if [[ "$DO_BUILD" == true ]]; then
 fi
 
 PORT="${PORT:-$(node_agent_default_port "$NODE_ID")}"
+if [[ -z "$ADVERTISE_HOST" ]]; then
+  ADVERTISE_HOST="$(node_agent_topology_node_host "$NODE_ID")"
+fi
 ADVERTISE_HOST="$(node_agent_detect_lan_ip)"
 node_agent_ensure_hf_token "$ROOT"
 if [[ -z "$MODELS_DIR" ]]; then
