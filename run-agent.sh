@@ -64,7 +64,13 @@ DO_BUILD=true
 node_agent_parse_kv_args \
   "MODEL ORCHESTRATOR NODE_ID PORT ADVERTISE_HOST MODELS_DIR REBENCHMARK VERIFY_MATERIALIZATION" \
   "$@"
-set -- "${NODE_AGENT_KV_REMAINING[@]}"
+# ${arr[@]} on a zero-element array throws "unbound variable" under `set -u`
+# in bash 3.2 (macOS system bash) -- guard on length first.
+if [[ ${#NODE_AGENT_KV_REMAINING[@]} -gt 0 ]]; then
+  set -- "${NODE_AGENT_KV_REMAINING[@]}"
+else
+  set --
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
