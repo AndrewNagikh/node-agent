@@ -6,6 +6,8 @@
 **Depends on:** none hard; best measured after Task 17.1 lands
 **Expected gain:** +~15% (5.18 ms → ≤ 1.5 ms on the serial path)
 
+> **Phase A instrumentation landed (2026-07-12):** `DIST_RUNTIME_SAMPLER_SYNC_SPLIT=1` (default off) inserts an explicit `llama_synchronize` on the final worker traced as `FINAL_LOGITS_SYNC` before the `SAMPLER` span — separating the GPU logits wait from the sampler chain (the logits analog of Task 15.1b). `FINAL_RESP_SEND` span traces the return framing. Homelab attribution run pending.
+
 ---
 
 ## Problem

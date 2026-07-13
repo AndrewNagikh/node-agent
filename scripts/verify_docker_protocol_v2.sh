@@ -22,8 +22,10 @@ collect_traces() {
     fi
     while IFS= read -r f; do
       [[ -z "$f" ]] && continue
+      # Keep the subdir in the destination name: decode/ and ttft/ contain
+      # files with identical basenames and would silently overwrite each other.
       local base
-      base="$(basename "$f")"
+      base="$(printf '%s' "${f#/data/models/perf_trace/}" | tr '/' '_')"
       docker cp "$ctr:$f" "$dest/${ctr}_${base}"
       found=$((found + 1))
       log "  collected $ctr:$f"

@@ -6,6 +6,8 @@
 **Depends on:** **Task 17.1** (async dispatch creates the window the sync can hide in)
 **Expected gain:** +~14% (4.72 ms `LLAMA_BACKEND_SYNCHRONIZE` off the serial path)
 
+> **Option A/B landed (2026-07-12):** `DIST_RUNTIME_GATHER_SYNC_SPLIT=1` (default off) performs one explicit `llama_synchronize` before the per-token `llama_get_embeddings*` loop in `hidden_pack_gather_stage_hidden`, traced as `GATHER_SYNC` and included in `HIDDEN_PACK_SUMMARY` (`sync_us`). Single-token decode: relocation (same wall, attribution + overlap-ready). Multi-token prefill waves: removes redundant per-call fences (Option B). Option C (overlap with dispatch gap) depends on 17.1B. Homelab measurement pending.
+
 ---
 
 ## Problem
