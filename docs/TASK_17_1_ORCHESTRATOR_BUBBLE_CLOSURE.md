@@ -1,7 +1,24 @@
 # Task 17.1 — Orchestrator Bubble Closure (Homelab)
 
 **Type:** Investigation → Implementation (two gated phases)
-**Status:** Phase B landed on Docker — **root cause was TCP Nagle/delayed-ACK**; homelab validation pending
+**Status:** Homelab validation done (2026-07-15): 25.8 → **~32 tok/s median** — but residual is **~39% of period**, bubble gate (<10%) **FAIL** → Phase B scheduler continuation (immediate ack / non-gating COMPLETE) is warranted. See "Homelab validation" section below.
+
+> **Homelab validation (2026-07-15, tinyllama 3-node: entry=node-a M3 Pro [0,8), middle=node-c RTX 4070 Ti [8,16), final=node-b M1 Pro [16,22)):**
+>
+> Validation was blocked most of the night by a worker deadlock that forced a ~30 s pipeline recovery on *every* generate (wall TPS 0.97–3.5 while internal decode timing read 24–44 tok/s). Root cause: queued-session consumer threads park in a blocking `queue.pop()` with no wakeup once the receiver thread exits on client disconnect; gen3_a's ctrl accept loop then never runs again and every reconnect dies with "protocol negotiation failed". Fixed by adding `close()` to `wave_inbound_queue`/`hidden_inbound_queue` (llama.cpp `e7127ff1d`). A second crash (macOS "Heap corruption detected" on node-b) was a RESET-vs-decode data race on the shared `llama_context` between the receiver and consumer threads, fixed with a per-worker ctx mutex (`aac72a43c`).
+>
+> | Metric (32 tok generates, post-fix) | Task 16 baseline | Docker NODELAY | Homelab now |
+> |---|---|---|---|
+> | Decode TPS | 25.8 | 60.7 | 22.6–34.8 wall across runs; **30.9 ms median period → ~32 tok/s** |
+> | Period | ~39 ms | 16.3 ms | median 30.9 ms, avg 40.5, p95 89, max 113 (LAN jitter tail) |
+> | Bubble/residual | 11.7 ms (30%) | 2.5% | **~12 ms median (~39%) — gate FAIL** |
+>
+> Clock-safe per-stage breakdown (entry-clock periods + local `dur_us` only; cross-node timestamps unusable on real hardware): compute Σ **18.8 ms** = entry 6.97 + middle 2.07 + final 5.09 + sampler 4.68. Middle does 8 layers in 2.1 ms on the 4070 Ti while entry needs 7.0 ms for 8 layers + embedding and final 9.8 ms for 6 layers + norm/head/sampler — the endpoint-inflation (17.4) and sampler-path (17.2) signatures, on top of the placement problem (heaviest stage on the weakest node — 17.5).
+>
+> Measurement-methodology defects found during validation (must fix before 17.2/17.4 attribution runs):
+> - Benchmark analysis silently consumed **stale July-11 traces**: workers spawn without `DIST_PERF_TRACE` unless the *orchestrator* env has it (fanout `perf_fanout_decode_context` is gated on the orchestrator's own `perf_trace_enabled()`), and the validator PASSes on old files. Needs a trace-freshness check + non-env-gated trace propagation.
+> - Worker events are written with empty `node_id`/`component` when `DIST_NODE_ID`/`DIST_PERF_COMPONENT` are unset at spawn, breaking `pipeline_stall_analysis` node filters (worked around with a source-file-based analysis).
+> - Orchestrator trace ids collide across restarts (`trace-000028` reused), appending new events into old dirs.
 
 > **Phase B result (2026-07-13): the Docker bubble was the TCP delayed-ACK timer, not scheduler logic.**
 > The Phase A attribution signature (two ~41 ms waits per token; v1 bubble measured at exactly 40.8 ms in Task 12) matched the classic Nagle + delayed-ACK interaction for small-message request/response ping-pong. The transport never set `TCP_NODELAY`. Setting it on every connected/accepted socket (`split_tcp_wire.cpp`, opt-out `DIST_TCP_NODELAY=0`):
