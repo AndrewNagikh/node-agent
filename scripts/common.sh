@@ -172,6 +172,27 @@ node_agent_ensure_built() {
   fi
 }
 
+# Rotates $1 once it exceeds $2 bytes (default 20MB), keeping up to $3
+# numbered backups (default 3). Call before the process that writes to it
+# starts, so each run's overflow lands in a fresh file.
+node_agent_rotate_log() {
+  local log_file="$1"
+  local max_bytes="${2:-20971520}"
+  local keep="${3:-3}"
+  [[ -f "$log_file" ]] || return 0
+
+  local size
+  size="$(wc -c < "$log_file" 2>/dev/null || echo 0)"
+  (( size < max_bytes )) && return 0
+
+  rm -f "${log_file}.${keep}"
+  local i
+  for (( i = keep - 1; i >= 1; i-- )); do
+    [[ -f "${log_file}.$i" ]] && mv -f "${log_file}.$i" "${log_file}.$((i + 1))"
+  done
+  mv -f "$log_file" "${log_file}.1"
+}
+
 node_agent_wsl_portproxy_hint() {
   if ! node_agent_is_wsl; then
     return

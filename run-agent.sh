@@ -25,6 +25,9 @@ KEY=value args (any can be omitted; falls back to nodes.conf, then env, then def
   ADVERTISE_HOST=192.168.1.10
   MODELS_DIR=/path/to/store
   MODEL=/path/to/model.gguf      (legacy; layer-first mode omits this)
+  NODE_LOG=1                     (default; tees stdout/stderr to
+                                   MODELS_DIR/logs/node_agent.log, rotated,
+                                   fetchable remotely via GET /debug/log)
   REBENCHMARK=1
   VERIFY_MATERIALIZATION=1
 
@@ -35,6 +38,7 @@ Options (equivalent --flag form, still supported):
   --port PORT
   --advertise-host IP
   --models-dir DIR
+  --no-node-log    disable the persistent rotated log file
   --rebenchmark
   --verify-materialization
   --build          build before run if binary missing (default)
@@ -57,12 +61,13 @@ NODE_ID="${NODE_ID:-node-a}"
 PORT="${PORT:-}"
 ADVERTISE_HOST="${ADVERTISE_HOST:-}"
 MODELS_DIR="${MODELS_DIR:-}"
+NODE_LOG="${NODE_LOG:-true}"
 REBENCHMARK="${REBENCHMARK:-false}"
 VERIFY_MATERIALIZATION="${VERIFY_MATERIALIZATION:-false}"
 DO_BUILD=true
 
 node_agent_parse_kv_args \
-  "MODEL ORCHESTRATOR NODE_ID PORT ADVERTISE_HOST MODELS_DIR REBENCHMARK VERIFY_MATERIALIZATION" \
+  "MODEL ORCHESTRATOR NODE_ID PORT ADVERTISE_HOST MODELS_DIR NODE_LOG REBENCHMARK VERIFY_MATERIALIZATION" \
   "$@"
 # ${arr[@]} on a zero-element array throws "unbound variable" under `set -u`
 # in bash 3.2 (macOS system bash) -- guard on length first.
@@ -80,6 +85,7 @@ while [[ $# -gt 0 ]]; do
     --port)            PORT="$2"; shift 2 ;;
     --advertise-host)  ADVERTISE_HOST="$2"; shift 2 ;;
     --models-dir)      MODELS_DIR="$2"; shift 2 ;;
+    --no-node-log)     NODE_LOG=false; shift ;;
     --rebenchmark)     REBENCHMARK=true; shift ;;
     --verify-materialization) VERIFY_MATERIALIZATION=true; shift ;;
     --build)           DO_BUILD=true; shift ;;
@@ -151,5 +157,17 @@ if [[ "$VERIFY_MATERIALIZATION" == true || "$VERIFY_MATERIALIZATION" == "1" ]]; 
 fi
 
 node_agent_wsl_portproxy_hint
+
+if [[ "$NODE_LOG" == true || "$NODE_LOG" == "1" ]]; then
+  LOG_FILE="$MODELS_DIR/logs/node_agent.log"
+  mkdir -p "$MODELS_DIR/logs"
+  node_agent_rotate_log "$LOG_FILE"
+  echo "run-agent: logging to $LOG_FILE (also GET /debug/log on this node's port)"
+  # Redirect this shell's own fds through tee, then exec into $BIN -- the
+  # exec below replaces the process image but keeps the fd redirection, so
+  # $BIN still ends up as the direct, signal-addressable process (same PID)
+  # instead of hiding behind a wrapper pipeline.
+  exec > >(tee -a "$LOG_FILE") 2>&1
+fi
 
 exec "$BIN" "${ARGS[@]}"
