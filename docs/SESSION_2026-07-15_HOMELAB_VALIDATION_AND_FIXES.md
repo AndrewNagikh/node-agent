@@ -37,3 +37,14 @@ Baseline 25.8 tok/s → now **~32 tok/s median** (runs: 22.6–34.8 wall) with r
 - Legacy GGUF materializer still produces wrong `token_embd.weight`/`output.weight` bytes — off the hot path since `83e8a269b`, but the fallback is broken; separate task candidate.
 - Orchestrator (192.168.50.154) runs without `DIST_PERF_TRACE=1` → per-wave traces need manual `begin_decode` fanout to nodes (workaround used tonight), or fix item 1 above.
 - Clock-safe analysis script for homelab traces: scratchpad `clock_safe_analysis.py` pattern (entry-clock periods + local `dur_us` only) — worth promoting into `benchmarks/perf_trace/` since cross-node timestamps are unusable on real hardware.
+
+## Addendum (post-session review with user): node score is fake, role order inverted
+
+User challenged why the strongest node (4070 Ti) never gets the heaviest work. Verified in code — two distinct defects:
+
+1. **`dist_run_hardware_benchmark()` (node_benchmark.cpp) never measures anything.** Score = `cpu_cores*12 + gpu_memory_mb/256*40` — VRAM *size* plus core count, no bandwidth, no actual GPU execution. Formula reproduces all three logged scores exactly (node-a 2364.9 / node-c 2205.9 / node-b 1908.8). The real measured benchmark (`run_node_benchmark`) only runs when a local GGUF path is set — never in layer-first mode. Result: 4070 Ti (504 GB/s) scores below M3 Pro (150 GB/s) because 12 GB < 13.3 GB VRAM.
+2. **Role order assumes entry is heaviest.** Layout assigns descending score to entry→middle→final, but Research 17 (and tonight's traces: final+sampler 9.8 ms vs middle 2.1 ms) shows final is the heaviest per-token stage. Even with correct scores the heaviest role would land on the weakest node.
+
+Interim fix (cheap, before full 17.5): (a) hardware-only score should estimate decode capability from memory *bandwidth* class, or better, run a tiny bandwidth-bound GPU probe (no model needed — time a large `ggml_mul_mat` / memcpy on the backend); (b) assign final role to the highest-score node. Full fix remains 17.5 (bytes ∝ BW_eff cost model + endpoint extras).
+
+User's design intent, confirmed: strongest nodes take the heaviest compute; weak nodes contribute memory for fit. Current code does neither.
