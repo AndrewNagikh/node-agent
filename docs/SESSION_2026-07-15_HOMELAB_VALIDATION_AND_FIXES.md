@@ -95,3 +95,31 @@ Locked clocks with an elevated `nvidia-smi -lgc 2775,2775` (2775 MHz = the susta
 **Landed**: [run-agent.ps1](../run-agent.ps1) now locks the GPU boost clock (`nvidia-smi -lgc <max>,<max>`, using the driver-reported `clocks.max.sm`) before launching `node_agent.exe` whenever a CUDA build is detected (`ggml-cuda.dll` present) and the script is running elevated, resetting it (`-rgc`) in a `finally` block on exit. Non-fatal and silent no-op if `nvidia-smi` is absent (non-CUDA nodes) or not elevated (warns once with the remediation instead of failing the launch), matching the existing `Ensure-FirewallRules` pattern. Not yet load-bearing: this needs the node to be launched as Administrator at least once to take effect; unelevated launches still get the old idle-clock behavior with a warning.
 
 **Still open**: the remaining ~9x gap between isolated and pipeline decode speed. Next step is probably per-hop network/serialization timing (candidate (2) above, or the still-unreachable `ab`-side `HIDDEN_TRANSFER` gap from the earlier session) rather than anything GPU-clock related — that lever has now been pulled.
+
+## Continuation session (2026-07-15, evening): 40 tok/s verified, ab-hop root cause found and fixed
+
+### Headline: GPU clock lock verified in the full pipeline
+
+Ran a full 3-node benchmark with the clock lock active on node-c: **40.1 tok/s wall / 45.0 tok/s decode**, no errors, PASS validation. Up from 25.8 baseline (+55%), 66% of the Docker ceiling (60.7 tok/s). Client-side wait breakdown confirms Task 17.1 Phase B (ack_wait/complete_wait not overlapping waves) is a non-issue on this runtime path today: `ack_wait` avg 0.06 ms, `send` 0.11 ms, `complete_wait` 0.07 ms -- essentially zero. All remaining time is `token_wait` (genuine pipeline compute+network), which is the correct/healthy state per the task's own framing.
+
+### ab-hop instrumentation: added, then found genuinely broken end-to-end
+
+Added the missing entry-side `perf_emit_hidden_transfer(..., "ab", ...)` call (llama.cpp `d9532c3c5`), mirroring `split_gen3_b.cpp`'s existing `"bc"` emission -- both entry send paths (`forward_to_peer` legacy, `send_hidden_to_b_only` queued). Built clean, pushed, deployed to all 3 nodes.
+
+Verified on the next run: **the ab hop still didn't appear** -- and neither did *any* of split_gen3_a's own worker events (`ENTRY_RECEIVE`/`ENTRY_COMPUTE_END`), even though split_gen3_b (middle, node-a) and split_gen3_c (final, node-c) both wrote full traces in the same run. Root-caused via code read, not guessing:
+
+- `perf_trace_enabled()` (`runtime_debug/perf_trace.cpp`) reads `DIST_PERF_TRACE` from the environment exactly once per process and caches it forever (`g_cfg_loaded`); `write_event()` gates purely on that cached flag.
+- Worker processes (`split_gen3_a/b/c`) are forked during `/session/create` (`setup_runtime_graph` -> `configure_node` -> `perf_attach_trace`), which runs **before** any `/session/generate` call exists to request tracing. Env vars set in the orchestrator/node_agent *after* a child has already forked never reach that child -- this is a hard OS constraint, not a caching bug that a reload call could fix.
+- `perf_attach_trace()` was already correctly gated on the orchestrator's own `perf_trace_enabled()` + an active trace context, but nothing ever populated either before `/session/create`'s pipeline setup ran, because `/session/create`'s handler never read a `perf_trace` field from its own request body (unlike `/session/generate`, fixed earlier today).
+- Net effect: whether a given session's workers got traced depended entirely on whichever *stale* enabled-state each node's long-lived `node_agent` process happened to already be sitting in from earlier, unrelated interactions that session -- explaining why middle/final "worked" and entry didn't in the same run: pure accident of interaction history, not anything role-specific.
+
+**Fix** (llama.cpp `506dff53f`, node-agent `a6f1652`): mirror the `/session/generate` fix on `/session/create` -- read `perf_trace` from the body, `dist_set_env("DIST_PERF_TRACE","1")` + `perf_trace_reload_config()` before `setup_runtime_graph()` runs, so `perf_attach_trace()` has a real context to hand every worker at spawn. `benchmark_runner.py`'s session_create call now also carries `perf_trace:true` when `DIST_PERF_TRACE` is set, matching `generate_request_body()`.
+
+**Not yet verified live** — this fix only touches `orchestrator.cpp` (no node-side changes needed; nodes are already on `d9532c3c5`). **Orchestrator not yet updated/restarted as of session end.**
+
+## Next session starting point
+
+1. Update + rebuild + restart the orchestrator only (192.168.50.154) — nodes are already current.
+2. Re-run the benchmark and confirm entry's own worker events (`ENTRY_RECEIVE`/`ENTRY_COMPUTE_END`/`HIDDEN_TRANSFER(link=ab)`) finally appear alongside middle/final.
+3. With all three hops now measurable, get the real ab vs bc timing split and decide the next lever (network/serialization reduction vs 17.4 endpoint inflation vs 17.5 full cost model) from actual data instead of estimates.
+4. Architecture note from today's discussion (see `docs/PROJECT_VISION_DISTRIBUTED_NETWORK.md`, already adopted): full tensor parallelism (splitting entry/final compute itself across nodes) is physically ruled out on LAN (§13 latency floor). "Hundreds of nodes with no strong ones" is answered by the existing dynamic per-session role assignment (already handles homogeneous pools fine) plus Task 20.x (fault tolerance/elastic membership, not started) and Task 21 (multi-tenant batching, not started) -- not by restructuring the pipeline. MoE expert-parallel routing is the one genuinely roleless execution model, and it's unbuilt.
