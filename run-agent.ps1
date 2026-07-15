@@ -160,6 +160,36 @@ function Ensure-SystemPath {
     }
 }
 
+function Ensure-GpuClockLock {
+  # Under real pipeline load, GPU compute arrives in short bursts separated by
+  # cross-node network round-trips (waiting on the previous hop's hidden
+  # state). Those bursts are too short/sparse for the driver's boost algorithm
+  # to ramp clocks up, so the GPU sits at its idle P-state (P8) the whole
+  # decode loop even though NVCP "Prefer maximum performance" is set. Locking
+  # the clock bypasses that ramp-up heuristic entirely. Measured on node-c
+  # (RTX 4070 Ti): stuck at P8/210MHz for the full pipeline run without this,
+  # ~30-40 tok/s with high run-to-run variance; ~43-45 tok/s and stable with
+  # the lock. See docs/SESSION_2026-07-15_HOMELAB_VALIDATION_AND_FIXES.md.
+  param([string]$BinDir)
+  if (-not (Test-Path (Join-Path $BinDir "ggml-cuda.dll"))) { return $false }
+  if (-not (Get-Command nvidia-smi -ErrorAction SilentlyContinue)) { return $false }
+  if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+      [Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Warning "run-agent: GPU may stall at idle clock (P8) between decode bursts in the pipeline, costing throughput and stability. Run once as Administrator to lock the boost clock via nvidia-smi -lgc."
+    return $false
+  }
+  $maxClock = (nvidia-smi --query-gpu=clocks.max.sm --format=csv,noheader,nounits 2>$null | Select-Object -First 1)
+  if (-not $maxClock) { return $false }
+  $maxClock = $maxClock.Trim()
+  & nvidia-smi -lgc "$maxClock,$maxClock" | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    Write-Warning "run-agent: nvidia-smi -lgc failed (exit $LASTEXITCODE); continuing without clock lock"
+    return $false
+  }
+  Write-Host "run-agent: locked GPU clock to $maxClock MHz (avoids P8 throttle during pipeline decode)"
+  return $true
+}
+
 function Ensure-FirewallRules {
   param([int]$HttpPort)
   if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
@@ -236,6 +266,14 @@ Write-Host "verify: curl http://${AdvertiseHost}:$Port/health"
 
 Ensure-CudaPath -AgentDir $BinDir
 Ensure-SystemPath
+$gpuClockLocked = Ensure-GpuClockLock -BinDir $BinDir
 
-& $Bin --listen "0.0.0.0:$Port" --advertise-host $AdvertiseHost `
-    --orchestrator $Orchestrator --node-id $NodeId --models-dir $ModelsDir
+try {
+    & $Bin --listen "0.0.0.0:$Port" --advertise-host $AdvertiseHost `
+        --orchestrator $Orchestrator --node-id $NodeId --models-dir $ModelsDir
+} finally {
+    if ($gpuClockLocked) {
+        & nvidia-smi -rgc | Out-Null
+        Write-Host "run-agent: reset GPU clock lock"
+    }
+}
