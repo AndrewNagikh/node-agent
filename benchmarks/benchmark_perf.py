@@ -137,11 +137,9 @@ def _timed_generate(
     timeout: int,
 ) -> dict[str, Any]:
     t0 = time.perf_counter()
-    status, out = br.http("POST", "/session/generate", {
-        "session_id": session_id,
-        "prompt": prompt,
-        "max_tokens": max_tokens,
-    }, timeout=timeout)
+    status, out = br.http(
+        "POST", "/session/generate",
+        br.generate_request_body(session_id, prompt, max_tokens), timeout=timeout)
     duration_ms = (time.perf_counter() - t0) * 1000.0
     text = out.get("text", "") if isinstance(out, dict) else ""
     count = int(out.get("count", len(out.get("tokens", []))) if isinstance(out, dict) else 0)

@@ -100,7 +100,14 @@ def collect_docker_traces(
     return found
 
 
-def collect_http_endpoint(dest: Path, *, host: str, port: int, node_id: str) -> int:
+def collect_http_endpoint(
+        dest: Path,
+        *,
+        host: str,
+        port: int,
+        node_id: str,
+        min_mtime_unix: float | None = None,
+) -> int:
     dest.mkdir(parents=True, exist_ok=True)
     base = f"http://{host}:{port}"
     status, listing = _http_json(f"{base}/perf/trace/list")
@@ -111,6 +118,12 @@ def collect_http_endpoint(dest: Path, *, host: str, port: int, node_id: str) -> 
         rel = str(item.get("rel", ""))
         if not rel:
             continue
+        if min_mtime_unix is not None:
+            mtime = item.get("mtime_unix")
+            # Nodes running an older build report no mtime; keep those files
+            # rather than silently collecting nothing.
+            if isinstance(mtime, (int, float)) and 0 < mtime < min_mtime_unix:
+                continue
         q = urllib.parse.urlencode({"rel": rel})
         fstatus, payload = _http_bytes(f"{base}/perf/trace/file?{q}")
         if fstatus != 200 or not payload:
@@ -125,13 +138,16 @@ def collect_http_traces(
         dest: Path,
         orchestrator: str,
         cluster: dict[str, Any],
+        *,
+        min_mtime_unix: float | None = None,
 ) -> int:
     dest.mkdir(parents=True, exist_ok=True)
     found = 0
     parsed = urlparse(orchestrator)
     host = parsed.hostname or "127.0.0.1"
     port = parsed.port or (443 if parsed.scheme == "https" else 9000)
-    found += collect_http_endpoint(dest, host=host, port=port, node_id="orchestrator")
+    found += collect_http_endpoint(
+        dest, host=host, port=port, node_id="orchestrator", min_mtime_unix=min_mtime_unix)
 
     seen: set[tuple[str, int]] = {(host, port)}
     for node in cluster.get("nodes", []):
@@ -141,16 +157,19 @@ def collect_http_traces(
         if not nh or not np or (nh, np) in seen:
             continue
         seen.add((nh, np))
-        found += collect_http_endpoint(dest, host=nh, port=np, node_id=nid)
+        found += collect_http_endpoint(
+            dest, host=nh, port=np, node_id=nid, min_mtime_unix=min_mtime_unix)
     return found
 
 
-def collect_local_dir(src: Path, dest: Path) -> int:
+def collect_local_dir(src: Path, dest: Path, *, min_mtime_unix: float | None = None) -> int:
     if not src.is_dir():
         return 0
     dest.mkdir(parents=True, exist_ok=True)
     found = 0
     for path in sorted(src.rglob("*.jsonl")):
+        if min_mtime_unix is not None and path.stat().st_mtime < min_mtime_unix:
+            continue
         rel = path.relative_to(src)
         out = dest / rel.name if rel.parent == Path(".") else dest / str(rel).replace("/", "_")
         shutil.copy2(path, out)
@@ -163,11 +182,17 @@ def collect_traces(
         *,
         orchestrator: str = "",
         cluster: dict[str, Any] | None = None,
+        min_mtime_unix: float | None = None,
 ) -> int:
-    """Collect traces using Docker, HTTP cluster export, or local override."""
+    """Collect traces using Docker, HTTP cluster export, or local override.
+
+    Files whose mtime predates ``min_mtime_unix`` (typically the benchmark run
+    start) are skipped: analyzers silently PASS on stale traces from earlier
+    runs otherwise.
+    """
     local = os.environ.get("PERF_TRACE_LOCAL_DIR", "").strip()
     if local:
-        return collect_local_dir(Path(local), dest)
+        return collect_local_dir(Path(local), dest, min_mtime_unix=min_mtime_unix)
 
     if os.environ.get("BENCHMARK_DOCKER", "1") == "1":
         n = collect_docker_traces(dest)
@@ -175,7 +200,7 @@ def collect_traces(
             return n
 
     if orchestrator and cluster:
-        n = collect_http_traces(dest, orchestrator, cluster)
+        n = collect_http_traces(dest, orchestrator, cluster, min_mtime_unix=min_mtime_unix)
         if n > 0:
             return n
 

@@ -85,6 +85,19 @@ def load_hf_token() -> None:
                 return
 
 
+def generate_request_body(session_id: str, prompt: str, max_tokens: int) -> dict[str, Any]:
+    """Body for /session/generate; carries perf_trace so the remote
+    orchestrator enables tracing without env plumbing on its host."""
+    body: dict[str, Any] = {
+        "session_id": session_id,
+        "prompt": prompt,
+        "max_tokens": max_tokens,
+    }
+    if os.environ.get("DIST_PERF_TRACE", "0") not in ("0", "", "false", "FALSE"):
+        body["perf_trace"] = True
+    return body
+
+
 def http(method: str, path: str, body: dict | None = None, timeout: int = 120) -> tuple[int, Any]:
     url = ORCH.rstrip("/") + path
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
@@ -763,6 +776,7 @@ def run_perf_trace_bundle(
         profile_name: str,
         scenarios: list[dict[str, Any]],
         pin_if_missing: bool = True,
+        run_started_unix: float | None = None,
 ) -> dict[str, Any] | None:
     """Collect raw JSONL traces and run Task 12 post-processing pipeline."""
     sys.path.insert(0, str(BENCH_DIR))
@@ -771,8 +785,12 @@ def run_perf_trace_bundle(
 
     raw_dir = out_dir / "perf_trace" / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
-    collected = collect_traces(raw_dir, orchestrator=ORCH, cluster=cluster)
-    log(f"Perf trace: collected {collected} JSONL file(s) -> {raw_dir}")
+    # 60s slack: node filesystem clocks may lag the runner's wall clock.
+    min_mtime = (run_started_unix - 60.0) if run_started_unix else None
+    collected = collect_traces(
+        raw_dir, orchestrator=ORCH, cluster=cluster, min_mtime_unix=min_mtime)
+    log(f"Perf trace: collected {collected} JSONL file(s) -> {raw_dir}"
+        + (f" (stale files before run start filtered)" if min_mtime else ""))
     if collected < 1:
         return None
 
@@ -819,11 +837,9 @@ def run_generate_stage(
     rec = StageRecord(name=label)
     rec.started_at = utc_now()
     t0 = time.perf_counter()
-    status, out = http("POST", "/session/generate", {
-        "session_id": session_id,
-        "prompt": prompt,
-        "max_tokens": max_tokens,
-    }, timeout=600)
+    status, out = http(
+        "POST", "/session/generate",
+        generate_request_body(session_id, prompt, max_tokens), timeout=600)
     rec.duration_ms = (time.perf_counter() - t0) * 1000.0
     rec.finished_at = utc_now()
     rec.response = out if isinstance(out, dict) else {"raw": out}
@@ -857,22 +873,16 @@ def run_prefill_decode_estimates(session_id: str, prompt: str) -> dict[str, Any]
 
 def run_stress(session_id: str, prompt: str, max_tokens: int, requests: int, warmup: int) -> dict[str, Any]:
     for _ in range(warmup):
-        http("POST", "/session/generate", {
-            "session_id": session_id,
-            "prompt": prompt,
-            "max_tokens": 4,
-        }, timeout=120)
+        http("POST", "/session/generate",
+             generate_request_body(session_id, prompt, 4), timeout=120)
 
     tps_samples = []
     t0 = time.perf_counter()
     errors = 0
     total_tokens = 0
     for i in range(requests):
-        status, out = http("POST", "/session/generate", {
-            "session_id": session_id,
-            "prompt": prompt,
-            "max_tokens": max_tokens,
-        }, timeout=600)
+        status, out = http("POST", "/session/generate",
+                           generate_request_body(session_id, prompt, max_tokens), timeout=600)
         if status != 200:
             errors += 1
             continue
@@ -1301,6 +1311,7 @@ def main() -> int:
             ensure_docker_protocol_v2_enabled()
 
     load_hf_token()
+    run_started_unix = time.time()
     run_id = make_run_id()
     out_dir = Path(args.output_dir) if args.output_dir else default_output_dir(run_id)
     traces_dir = out_dir / "traces"
@@ -1390,6 +1401,7 @@ def main() -> int:
             profile_name=args.profile,
             scenarios=scenarios,
             pin_if_missing=True,
+            run_started_unix=run_started_unix,
         )
 
     document = build_results_document(
