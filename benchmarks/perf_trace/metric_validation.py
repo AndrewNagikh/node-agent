@@ -43,6 +43,11 @@ STAGE_DECODE_CHAIN: dict[str, tuple[str, ...]] = {
 
 CLIENT_EVENTS = ("CLIENT_RESPONSE", "GENERATE_END", "CLIENT_TTFT")
 
+# Cross-node steady_clock origins differ (Mac vs Windows). Wall path uses ts_us across
+# nodes; when wall time is implausible, fall back to span-duration serial path.
+MAX_REASONABLE_WALL_CRITICAL_PATH_MS = 120_000.0
+WALL_VS_SERIAL_SKEW_RATIO = 5.0
+
 
 def _read_json(path: Path) -> dict[str, Any]:
     if not path.is_file():
@@ -212,6 +217,60 @@ def _instant_ts(events: list[dict[str, Any]], stage: str, instant_event: str) ->
     return None
 
 
+def _hop_ms(events: list[dict[str, Any]], stage: str, link: str) -> float | None:
+    for ev in events:
+        if ev.get("event") != "HIDDEN_TRANSFER" or str(ev.get("stage", "")) != stage:
+            continue
+        attrs = ev.get("attrs") or {}
+        if isinstance(attrs, dict) and attrs.get("link") == link:
+            dur = ev.get("dur_us")
+            if isinstance(dur, (int, float)) and dur > 0:
+                return float(dur) / 1000.0
+    return None
+
+
+def _span_dur_by_event(events: list[dict[str, Any]], event_name: str) -> float | None:
+    for ev in events:
+        if ev.get("event") != event_name:
+            continue
+        dur = ev.get("dur_us")
+        if isinstance(dur, (int, float)) and dur > 0:
+            return float(dur) / 1000.0
+    return None
+
+
+def _is_wall_clock_skewed(
+        wall_ms: float | None,
+        *,
+        sum_compute_ms: float | None,
+        serial_critical_path_ms: float | None,
+) -> bool:
+    if wall_ms is None:
+        return False
+    if wall_ms > MAX_REASONABLE_WALL_CRITICAL_PATH_MS:
+        return True
+    reference = serial_critical_path_ms or sum_compute_ms
+    if reference is not None and reference > 0:
+        return wall_ms > reference * WALL_VS_SERIAL_SKEW_RATIO
+    return False
+
+
+def _effective_critical_path_ms(
+        wall_ms: float | None,
+        *,
+        sum_compute_ms: float | None,
+        serial_critical_path_ms: float | None,
+        wall_clock_skewed: bool,
+) -> float | None:
+    if not wall_clock_skewed and wall_ms is not None:
+        return wall_ms
+    if serial_critical_path_ms is not None:
+        return serial_critical_path_ms
+    if sum_compute_ms is not None:
+        return sum_compute_ms
+    return wall_ms
+
+
 def compute_critical_path_tokens(
         events: list[dict[str, Any]],
         *,
@@ -229,10 +288,21 @@ def compute_critical_path_tokens(
     rows: list[dict[str, Any]] = []
     phase_events = [e for e in events if str(e.get("phase", "")) == phase]
     for wave in sorted(waves):
+        wave_ev = _events_for_wave(phase_events, wave, "entry")
+        wave_ev += _events_for_wave(phase_events, wave, "middle")
+        wave_ev += _events_for_wave(phase_events, wave, "final")
+
         entry_recv = _instant_ts(_events_for_wave(phase_events, wave, "entry"), "entry", "ENTRY_RECEIVE")
         entry_comp = _span_dur_ms(_events_for_wave(phase_events, wave, "entry"), "entry", "ENTRY_COMPUTE_END")
         middle_comp = _span_dur_ms(_events_for_wave(phase_events, wave, "middle"), "middle", "MIDDLE_COMPUTE_END")
         final_comp = _span_dur_ms(_events_for_wave(phase_events, wave, "final"), "final", "FINAL_COMPUTE_END")
+
+        ab = _hop_ms(wave_ev, "entry", "ab")
+        bc = _hop_ms(wave_ev, "middle", "bc")
+        sampling = _span_dur_by_event(wave_ev, "SAMPLER_END")
+
+        serial_parts = [entry_comp, ab, middle_comp, bc, final_comp, sampling]
+        serial_critical = round(sum(serial_parts), 3) if all(p is not None for p in serial_parts) else None
 
         final_end_ts = None
         final_recv = _instant_ts(_events_for_wave(phase_events, wave, "final"), "final", "FINAL_RECEIVE")
@@ -248,28 +318,70 @@ def compute_critical_path_tokens(
         if all(p is not None for p in parts):
             sum_compute = sum(parts)
 
+        wall_skewed = _is_wall_clock_skewed(
+            wall_critical,
+            sum_compute_ms=sum_compute,
+            serial_critical_path_ms=serial_critical,
+        )
+        effective = _effective_critical_path_ms(
+            wall_critical,
+            sum_compute_ms=sum_compute,
+            serial_critical_path_ms=serial_critical,
+            wall_clock_skewed=wall_skewed,
+        )
+
         rows.append({
             "WaveID": wave,
             "entry_compute_ms": entry_comp,
             "middle_compute_ms": middle_comp,
             "final_compute_ms": final_comp,
+            "transfer_ab_ms": ab,
+            "transfer_bc_ms": bc,
+            "sampling_ms": sampling,
             "sum_compute_ms": sum_compute,
+            "serial_critical_path_ms": serial_critical,
             "wall_critical_path_ms": wall_critical,
+            "wall_clock_skewed": wall_skewed,
+            "effective_critical_path_ms": effective,
         })
 
-    valid = [r for r in rows if r.get("wall_critical_path_ms") is not None]
+    valid_wall = [
+        r for r in rows
+        if r.get("wall_critical_path_ms") is not None and not r.get("wall_clock_skewed")
+    ]
     sum_valid = [r for r in rows if r.get("sum_compute_ms") is not None]
+    serial_valid = [r for r in rows if r.get("serial_critical_path_ms") is not None]
+    effective_valid = [r for r in rows if r.get("effective_critical_path_ms") is not None]
+    skew_count = sum(1 for r in rows if r.get("wall_clock_skewed"))
+
+    if skew_count > 0:
+        effective_source = (
+            "serial_span_sum" if serial_valid
+            else "compute_sum" if sum_valid
+            else "wall_clock"
+        )
+    else:
+        effective_source = "wall_clock"
 
     return {
         "phase": phase,
         "token_rows": rows,
+        "clock_skew_detected": skew_count > 0,
+        "clock_skew_wave_count": skew_count,
+        "effective_path_source": effective_source,
         "avg_wall_critical_path_ms": round(statistics.mean(
-            [r["wall_critical_path_ms"] for r in valid]
-        ), 3) if valid else None,
+            [r["wall_critical_path_ms"] for r in valid_wall]
+        ), 3) if valid_wall else None,
         "avg_sum_compute_ms": round(statistics.mean(
             [r["sum_compute_ms"] for r in sum_valid]
         ), 3) if sum_valid else None,
-        "complete_count": len(valid),
+        "avg_serial_critical_path_ms": round(statistics.mean(
+            [r["serial_critical_path_ms"] for r in serial_valid]
+        ), 3) if serial_valid else None,
+        "avg_effective_critical_path_ms": round(statistics.mean(
+            [r["effective_critical_path_ms"] for r in effective_valid]
+        ), 3) if effective_valid else None,
+        "complete_count": len(effective_valid),
         "wave_count": len(rows),
     }
 
@@ -295,9 +407,9 @@ def compute_bubble_from_entry_periods(
     recv_events.sort(key=lambda x: x[1])
 
     crit_by_wave = {
-        r["WaveID"]: r.get("wall_critical_path_ms")
+        r["WaveID"]: r.get("effective_critical_path_ms")
         for r in critical_rows
-        if r.get("wall_critical_path_ms") is not None
+        if r.get("effective_critical_path_ms") is not None
     }
 
     periods: list[float] = []
@@ -329,7 +441,7 @@ def compute_bubble_from_entry_periods(
         "avg_period_ms": round(avg_period, 3),
         "avg_bubble_ms": round(avg_bubble, 3),
         "bubble_pct": round(bubble_pct, 2) if bubble_pct is not None else None,
-        "formula": "bubble_ms = entry_period_ms - wall_critical_path_ms; "
+        "formula": "bubble_ms = entry_period_ms - effective_critical_path_ms; "
                    "bubble_pct = bubble_ms / entry_period_ms × 100",
         "sample_count": len(bubbles),
     }
@@ -369,28 +481,58 @@ def compute_tps_from_timing(timing: dict[str, Any]) -> dict[str, Any]:
 
 
 def compute_ceiling_tps(critical: dict[str, Any]) -> dict[str, Any]:
-    """Ceiling = 1000 / critical_path_ms (AC §6). Uses wall critical path when complete."""
-    avg = critical.get("avg_wall_critical_path_ms")
-    if avg is None or avg <= 0:
-        alt = critical.get("avg_sum_compute_ms")
-        if alt is None or alt <= 0:
-            return {
-                "status": "UNKNOWN",
-                "reason": "critical path not computable from decode spans",
-                "value": None,
-                "formula": "ceiling_tps = 1000 / avg_wall_critical_path_ms",
-            }
-        avg = alt
-        formula = "ceiling_tps = 1000 / avg(entry+middle+final compute_ms) [fallback]"
-    else:
-        formula = "ceiling_tps = 1000 / avg_wall_critical_path_ms"
+    """Ceiling = 1000 / critical_path_ms (AC §6).
+
+    Prefers aligned wall clock when trustworthy; falls back to serial span sum when
+    cross-node steady_clock skew is detected.
+    """
+    skewed = bool(critical.get("clock_skew_detected"))
+    avg_eff = critical.get("avg_effective_critical_path_ms")
+    path_source = str(critical.get("effective_path_source") or "wall_clock")
+    if avg_eff is not None and avg_eff > 0:
+        if skewed and path_source == "serial_span_sum":
+            formula = (
+                "ceiling_tps = 1000 / avg_serial_critical_path_ms "
+                "[clock-skew fallback]"
+            )
+        elif skewed and path_source == "compute_sum":
+            formula = (
+                "ceiling_tps = 1000 / avg(entry+middle+final compute_ms) "
+                "[clock-skew fallback]"
+            )
+        else:
+            formula = "ceiling_tps = 1000 / avg_wall_critical_path_ms"
+        return {
+            "status": "PASS",
+            "reason": (
+                "cross-node clock skew — using span-duration critical path"
+                if skewed else None
+            ),
+            "value": round(1000.0 / avg_eff, 3),
+            "critical_path_ms": round(avg_eff, 3),
+            "formula": formula,
+            "source": path_source,
+            "clock_skew_detected": skewed,
+        }
+
+    alt = critical.get("avg_sum_compute_ms")
+    if alt is not None and alt > 0:
+        return {
+            "status": "PASS",
+            "reason": "partial spans — compute-only critical path",
+            "value": round(1000.0 / alt, 3),
+            "critical_path_ms": round(alt, 3),
+            "formula": "ceiling_tps = 1000 / avg(entry+middle+final compute_ms) [fallback]",
+            "source": "compute_sum",
+            "clock_skew_detected": skewed,
+        }
 
     return {
-        "status": "PASS",
-        "reason": None,
-        "value": round(1000.0 / avg, 3),
-        "critical_path_ms": round(avg, 3),
-        "formula": formula,
+        "status": "UNKNOWN",
+        "reason": "critical path not computable from decode spans",
+        "value": None,
+        "formula": "ceiling_tps = 1000 / avg_effective_critical_path_ms",
+        "clock_skew_detected": skewed,
     }
 
 
@@ -506,8 +648,11 @@ def run_metric_validation(
     metric_status = {
         "tps": tps_doc,
         "critical_path": {
-            "status": "PASS" if critical.get("avg_wall_critical_path_ms") else "UNKNOWN",
-            "reason": None if critical.get("avg_wall_critical_path_ms") else "missing decode spans",
+            "status": "PASS" if critical.get("avg_effective_critical_path_ms") else "UNKNOWN",
+            "reason": (
+                None if critical.get("avg_effective_critical_path_ms")
+                else "missing decode spans"
+            ),
             **critical,
         },
         "ceiling_tps": ceiling_doc,
@@ -542,8 +687,11 @@ def run_metric_validation(
 
     checks.append({
         "name": "critical_path_present",
-        "status": "PASS" if critical.get("avg_wall_critical_path_ms") else "UNKNOWN",
-        "reason": None if critical.get("avg_wall_critical_path_ms") else "missing decode spans",
+        "status": "PASS" if critical.get("avg_effective_critical_path_ms") else "UNKNOWN",
+        "reason": (
+            None if critical.get("avg_effective_critical_path_ms")
+            else "missing decode spans"
+        ),
     })
     checks.append({
         "name": "bubble_measurable",

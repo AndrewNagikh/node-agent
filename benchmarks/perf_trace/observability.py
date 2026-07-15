@@ -201,6 +201,9 @@ def build_critical_path_doc(
             if base_row.get("WaveID") == wave:
                 row["wall_critical_path_ms"] = base_row.get("wall_critical_path_ms")
                 row["sum_compute_ms"] = base_row.get("sum_compute_ms")
+                row["serial_critical_path_ms"] = base_row.get("serial_critical_path_ms")
+                row["wall_clock_skewed"] = base_row.get("wall_clock_skewed")
+                row["effective_critical_path_ms"] = base_row.get("effective_critical_path_ms")
                 break
         enriched.append(row)
 
@@ -211,9 +214,12 @@ def build_critical_path_doc(
             "entry_compute + transfer_ab + middle_compute + transfer_bc + "
             "final_compute + sampling"
         ),
+        "clock_skew_detected": base.get("clock_skew_detected", False),
+        "clock_skew_wave_count": base.get("clock_skew_wave_count", 0),
         "avg_serial_critical_path_ms": round(
             statistics.mean([r["serial_critical_path_ms"] for r in valid_serial]), 3
         ) if valid_serial else None,
+        "avg_effective_critical_path_ms": base.get("avg_effective_critical_path_ms"),
         "avg_wall_critical_path_ms": base.get("avg_wall_critical_path_ms"),
         "token_rows": enriched,
         "complete_count": len(valid_serial),

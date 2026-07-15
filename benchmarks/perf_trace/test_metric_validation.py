@@ -11,6 +11,7 @@ from pathlib import Path
 from perf_trace.metric_validation import (
     build_token_chain,
     compute_ceiling_tps,
+    compute_critical_path_tokens,
     compute_tps_from_timing,
     cross_check_tps_vs_ceiling,
     run_metric_validation,
@@ -137,10 +138,34 @@ class MetricValidationTest(unittest.TestCase):
             self.assertTrue((analysis / "validation.json").is_file())
 
     def test_ceiling_from_critical_path(self) -> None:
-        crit = {"avg_wall_critical_path_ms": 25.0}
+        crit = {"avg_effective_critical_path_ms": 25.0, "clock_skew_detected": False}
         doc = compute_ceiling_tps(crit)
         self.assertEqual(doc["status"], "PASS")
         self.assertEqual(doc["value"], 40.0)
+
+    def test_clock_skew_fallback_to_serial_ceiling(self) -> None:
+        events = _full_decode_chain(1, ts_base=0)
+        skew_us = 10_000_000_000_000
+        for ev in events:
+            if ev["stage"] in ("middle", "final"):
+                if ev["kind"] == "instant":
+                    ev["ts_us"] += skew_us
+                elif isinstance(ev.get("ts_us"), int):
+                    ev["ts_us"] += skew_us
+
+        critical = compute_critical_path_tokens(events)
+        self.assertTrue(critical["clock_skew_detected"])
+        self.assertIsNone(critical["avg_wall_critical_path_ms"])
+        self.assertLess(critical["avg_effective_critical_path_ms"], 100.0)
+
+        ceiling = compute_ceiling_tps(critical)
+        self.assertEqual(ceiling["status"], "PASS")
+        self.assertEqual(ceiling["source"], "compute_sum")
+        self.assertGreater(ceiling["value"], 10.0)
+
+        tps = compute_tps_from_timing({"decode_ms": 500.0, "generated_tokens": 10})
+        cross = cross_check_tps_vs_ceiling(tps, ceiling)
+        self.assertEqual(cross["status"], "PASS")
 
 
 if __name__ == "__main__":

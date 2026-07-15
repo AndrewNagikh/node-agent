@@ -22,6 +22,8 @@ from perf_trace.metric_validation import (
     stage_span_coverage,
     write_validation,
 )
+from perf_trace.hidden_gather_breakdown import write_hidden_gather_breakdown
+from perf_trace.hidden_transport_breakdown import write_hidden_transport_breakdown
 from perf_trace.observability import write_observability_artifacts
 from perf_trace.queue import merge_queue
 from perf_trace.regression import DEFAULT_BASELINE_DIR, run_regression
@@ -127,6 +129,18 @@ def run_postprocess(
         observability=observability_doc,
     )
 
+    hidden_breakdown_doc = write_hidden_transport_breakdown(
+        raw_dir,
+        analysis,
+        trace_id=validation_doc.get("trace_id") or primary_tid or trace_id,
+    )
+
+    hidden_gather_doc = write_hidden_gather_breakdown(
+        raw_dir,
+        analysis,
+        trace_id=validation_doc.get("trace_id") or primary_tid or trace_id,
+    )
+
     return {
         "raw_files": merged_count,
         "analysis_dir": str(analysis),
@@ -142,6 +156,8 @@ def run_postprocess(
         "ttft": ttft_doc.get("summary") if isinstance(ttft_doc, dict) else None,
         "validation": validation_doc,
         "validation_overall": validation_doc.get("overall"),
+        "hidden_transport_breakdown": hidden_breakdown_doc,
+        "hidden_gather_breakdown": hidden_gather_doc,
         "observability": {
             "trace_id": observability_doc.get("trace_id"),
             "timeline_events": observability_doc.get("timeline", {}).get("event_count"),
