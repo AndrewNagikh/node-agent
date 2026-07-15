@@ -32,16 +32,20 @@ $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 function Apply-KvArgs {
     param([string[]]$Tokens)
+    # Hashtable keys are case-insensitive in PowerShell, so normalize first.
     $map = @{
-        'NodeId' = 'NodeId'; 'NODE_ID' = 'NodeId'
-        'Orchestrator' = 'Orchestrator'; 'ORCHESTRATOR' = 'Orchestrator'
-        'AdvertiseHost' = 'AdvertiseHost'; 'ADVERTISE_HOST' = 'AdvertiseHost'
-        'ModelsDir' = 'ModelsDir'; 'MODELS_DIR' = 'ModelsDir'
-        'Port' = 'Port'; 'PORT' = 'Port'
+        'nodeid'        = 'NodeId'
+        'node_id'       = 'NodeId'
+        'orchestrator'  = 'Orchestrator'
+        'advertisehost' = 'AdvertiseHost'
+        'advertise_host'= 'AdvertiseHost'
+        'modelsdir'     = 'ModelsDir'
+        'models_dir'    = 'ModelsDir'
+        'port'          = 'Port'
     }
     foreach ($tok in $Tokens) {
         if ($tok -match '^([A-Za-z_][A-Za-z0-9_]*)=(.*)$') {
-            $k = $Matches[1]; $v = $Matches[2]
+            $k = $Matches[1].ToLowerInvariant(); $v = $Matches[2]
             if ($map.ContainsKey($k)) {
                 if ($map[$k] -eq 'Port') {
                     Set-Variable -Name Port -Value ([int]$v) -Scope Script
@@ -77,7 +81,13 @@ function Load-Topology {
     return $topo
 }
 
-if ($Rest) { Apply-KvArgs -Tokens $Rest }
+$kvTokens = @()
+if ($NodeId -match '^[A-Za-z_][A-Za-z0-9_]*=') {
+    $kvTokens += $NodeId
+    $NodeId = "node-c"
+}
+if ($Rest) { $kvTokens += $Rest }
+if ($kvTokens) { Apply-KvArgs -Tokens $kvTokens }
 $Topology = Load-Topology -RootDir $Root
 
 if (-not $Orchestrator -and $Topology["ORCHESTRATOR_HOST"]) {
