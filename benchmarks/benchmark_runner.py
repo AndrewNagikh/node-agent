@@ -1042,11 +1042,17 @@ def run_scenario(
         "session_create_timeout_s",
         900 if os.environ.get("DIST_RUNTIME_LAYER_FIRST", "0") == "1" else 300,
     ))
+    session_create_body: dict[str, Any] = {"model": model_id, "n_ctx": n_ctx}
+    if os.environ.get("DIST_PERF_TRACE", "0") not in ("0", "", "false", "FALSE"):
+        # Workers are spawned during session_create; tracing enabled only
+        # later (e.g. on generate) can never reach an already-spawned
+        # worker process, so this must be requested here too.
+        session_create_body["perf_trace"] = True
     with StageTimer("session_create") as sess:
         status, out = http(
             "POST",
             "/session/create",
-            {"model": model_id, "n_ctx": n_ctx},
+            session_create_body,
             timeout=session_create_timeout_s,
         )
         sess.response = out if isinstance(out, dict) else {}
