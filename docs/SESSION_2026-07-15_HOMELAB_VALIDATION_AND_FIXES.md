@@ -123,3 +123,36 @@ Verified on the next run: **the ab hop still didn't appear** -- and neither did 
 2. Re-run the benchmark and confirm entry's own worker events (`ENTRY_RECEIVE`/`ENTRY_COMPUTE_END`/`HIDDEN_TRANSFER(link=ab)`) finally appear alongside middle/final.
 3. With all three hops now measurable, get the real ab vs bc timing split and decide the next lever (network/serialization reduction vs 17.4 endpoint inflation vs 17.5 full cost model) from actual data instead of estimates.
 4. Architecture note from today's discussion (see `docs/PROJECT_VISION_DISTRIBUTED_NETWORK.md`, already adopted): full tensor parallelism (splitting entry/final compute itself across nodes) is physically ruled out on LAN (§13 latency floor). "Hundreds of nodes with no strong ones" is answered by the existing dynamic per-session role assignment (already handles homogeneous pools fine) plus Task 20.x (fault tolerance/elastic membership, not started) and Task 21 (multi-tenant batching, not started) -- not by restructuring the pipeline. MoE expert-parallel routing is the one genuinely roleless execution model, and it's unbuilt.
+
+## Session 2026-07-16: trace plumbing fully fixed, residual attributed to Wi-Fi return path
+
+### Fixes landed (all pushed)
+
+| Commit | Fix |
+|---|---|
+| `296710c27` | Two node_agent trace-enable sites missing `perf_trace_reload_config()` (incl. `perf_consume_trace_from_body` used by `/configure`) -- workers spawned with tracing off despite the orchestrator attaching trace context |
+| `ab732467f` | node_agent exits on first failed orchestrator registration instead of retrying (heartbeat never got a chance to run); now retries 15x/2s |
+| `df4afc4eb` | **The big one: perf-trace output file opened once per process and never reopened on context change.** A worker's first write usually lands during prefill, so its handle stuck to the ttft subdir of whatever trace was current, and every later decode event of every later trace was appended there forever. This single bug explains ALL "missing" worker events across two days: entry's 994 decode events (incl. 80 ab HIDDEN_TRANSFERs) physically existed on disk, misfiled |
+| `141ae8d62` | Revert of `d9532c3c5` (duplicate ab emission): the ab HIDDEN_TRANSFER was always emitted by `hidden_pack_emit_breakdown_spans`; it was only ever misfiled, never missing |
+
+Diagnostic detour also caught a real ops hazard twice: duplicate `node_agent` processes both binding :9001 (SO_REUSE lets both listen; requests randomly hit stale code). Worth a startup guard eventually.
+
+### Full period accounting -- finally closes (median, 32-token generate, entry=node-b/middle=node-a/final=node-c 4/4/14)
+
+| Component | ms |
+|---|---|
+| entry compute + GATHER (node-b) | 5.0 + 2.2 |
+| middle queue+compute+send (node-a) | 6.9 |
+| final queue+compute+sampler (node-c) | 8.8 |
+| **token return path final->middle->entry->client** | **13.7** |
+| Total | ~36.6 vs 37.3 measured ✓ |
+
+Method: node_agent and the entry worker share node-b's monotonic clock (same box), so `ENTRY_SEND_END -> CLIENT_TOKEN_WAIT_END` bounds the remote round trip exactly; middle/final internals measured on their own clocks; the difference is the uninstrumented return relay.
+
+**Root cause of the return-path cost: Wi-Fi.** Measured RTTs: a<->b 5.9 ms avg with **10% packet loss**, a<->c 6.9 ms avg with spikes to 27 ms. Two serial return hops x ~3 ms one-way + thread wakeups = 13.7 ms; TCP retransmits from the packet loss explain the 358 ms period spikes. The forward hidden-state path is pipelined (overlapped with compute) and doesn't hurt; the return path is serial and fully exposed. Socket sends themselves are 0.06-0.23 ms -- NODELAY did its job; this is physical airtime latency, not a protocol defect.
+
+### Decision (user): cables are not an option -> Task 19 (speculative pipeline) is the path
+
+Per `docs/TASK_19_SPECULATIVE_PIPELINE_RESEARCH.md`, speculation amortizes the entire fixed per-token cost (now precisely measured: ~13.7 ms return + queue overheads) across k tokens per verify wave. Today's numbers feed directly into research questions A (placement latency model) and D (projected throughput: `T_k = (C*W + F)/E[accepted]` with F ~= 14-16 ms measured). Question B (offline acceptance rates) is fully local and can start immediately. A direct final->entry return connection (saves one Wi-Fi hop, ~3-6 ms) should be considered as part of the RFC-0014 return-path design rather than as a separate interim change.
+
+Deploy note: nodes currently run the `df4afc4eb` build (harmless duplicate ab emission per token); `141ae8d62` cleans it up at the next convenient restart. Analyzers filtering HIDDEN_TRANSFER should prefer the event whose dur_us != attrs.send_us until then.
