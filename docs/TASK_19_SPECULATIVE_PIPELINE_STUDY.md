@@ -189,3 +189,37 @@ valuable runtime upgrade before or during Phase 3.
 Phase 1 exit criteria met. Next: Phase 2 (RFC-0014 write-up incl. direct
 final->entry link + RTT matrix), Phase 3 (cluster integration behind
 `DIST_RUNTIME_SPECULATIVE=1`, node_agent draft loop, ≥×2 measured gate).
+
+## F. Two gaps found in post-Phase-1 review (2026-07-17), to fold into RFC-0014
+
+**F.1 — n-gram/lookup fallback needs a kill-switch, not blind enablement.**
+When no draft model fits (or as the zero-memory default), n-gram/lookup
+speculation (llama.cpp's own lookup-decoding mechanics) is the natural
+fallback — but under the §D correction (sequential verify decode costs
+`(k+1)` stage-computes per wave, only `F` amortizes), a wave with ~0%
+acceptance is **worse than no speculation at all**: `(k+1)*C*W + F` per
+confirmed token vs baseline's `C*W + F`. N-gram acceptance is highly
+text-dependent (good on repetitive/code text, poor on open-ended prose),
+so it cannot be enabled unconditionally. Required for Phase 2/3: an
+online acceptance monitor (rolling window over recent waves) that (a)
+shrinks `k` as acceptance drops and (b) fully disables speculation (falls
+back to the plain decode path) below a measured break-even threshold
+(`E[tok/wave] <= 1`, i.e. acceptance too low to recoup `(k+1)` compute).
+This generalizes to model-draft speculation too — the same monitor should
+gate any draft source, not just n-gram.
+
+**F.2 — draft weights should be resident per role, loaded asynchronously.**
+§A's placement rule ties the draft to the `final` role, not to a session;
+as long as the role assignment is stable across sessions, the draft's
+~0.8 GB load cost should be paid once per role-assignment, not once per
+session. Two implementation requirements for Phase 2/3: (1) node_agent
+caches the loaded draft context keyed by (draft model id, node), reusing
+it across sessions while the node continues to hold `final`; (2) draft
+load for a *new* role assignment runs asynchronously, in parallel with
+the existing target-model install/prepare steps already on the session-
+create critical path — the session must not block on draft readiness.
+Until the draft is ready, the session runs on the F.1 fallback (n-gram or
+no speculation) and switches over transparently on the first wave after
+load completes (the verify-wave protocol is source-agnostic — it doesn't
+matter whether `verify_ids` came from a model or from n-gram lookup, so
+the switch requires no protocol change).
