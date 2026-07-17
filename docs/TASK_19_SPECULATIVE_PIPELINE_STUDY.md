@@ -157,3 +157,35 @@ target).
 3. **Phase 3 — cluster implementation** behind a flag
    (`DIST_RUNTIME_SPECULATIVE=1`), acceptance-rate trace events, benchmark
    gate: >= x2 measured on the homelab cluster vs same-day baseline.
+
+---
+
+## Phase 1 results (2026-07-17, llama.cpp `e8e669c96`)
+
+Implemented per §C and validated on a localhost 3-stage pipeline (llama-3.2
+3B target split 9/9/10, 1B draft, M3 Pro):
+
+| k | pipeline acceptance | offline (§B) | determinism | D-model pred vs meas |
+|---|---|---|---|---|
+| 2 | 83.3% | 83.3% | **PASS** | 35.0 vs 33.4 tok/s (5%) |
+| 4 | 69.2% | 77.7% | **PASS** | 28.4 vs 26.2 tok/s (8%) |
+| 8 | 62.5% | 67.6% | **PASS** | 24.3 vs 27.8 tok/s (12%) |
+
+Determinism = speculative token stream bit-identical to the plain greedy
+loop. D-model gate (±25%) passed on all k after one correction:
+
+**Correction to §D — sequential verify decode.** Hidden-state injection on
+stages with `layer_start > 0` must run one token at a time (KV per
+position), so a verify wave costs ~(k+1) stage-computes, not ~1. Only the
+fixed cost F amortizes. Local single-GPU runs are therefore *slower* than
+baseline by design (F≈0, one GPU shared by all stages + draft). Revised
+cluster projection at k=4: wave ≈ (k+1)·max_stage + tail latencies + F ≈
+59 ms for E≈3.8 tokens → **~60-65 tok/s vs 26.8 baseline (×2.3)** — down
+from the naive 101 tok/s but still comfortably above the ×2 Phase 3 gate.
+Making batched hidden injection KV-correct (removing the one-token
+constraint) would restore most of the difference and is the single most
+valuable runtime upgrade before or during Phase 3.
+
+Phase 1 exit criteria met. Next: Phase 2 (RFC-0014 write-up incl. direct
+final->entry link + RTT matrix), Phase 3 (cluster integration behind
+`DIST_RUNTIME_SPECULATIVE=1`, node_agent draft loop, ≥×2 measured gate).
