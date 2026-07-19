@@ -5,3 +5,4 @@ state/
 logs/
 .env
 nodes.conf
+dashboard-app/node_modules/

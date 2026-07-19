@@ -1,0 +1,45 @@
+{
+  "name": "distributed-llm-dashboard",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Desktop dashboard for the distributed-llm homelab cluster: launches this machine's node_agent, shows cluster status, and updates/rebuilds/restarts it locally.",
+  "type": "commonjs",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "concurrently -k -n vite,electron -c blue,green \"vite\" \"wait-on tcp:5173 && cross-env DASHBOARD_DEV=1 electron .\"",
+    "build:renderer": "vite build",
+    "dist:mac": "npm run build:renderer && electron-builder --mac",
+    "dist:win": "npm run build:renderer && electron-builder --win"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "cross-env": "^7.0.3",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "vite": "^6.0.5",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "com.homelab.distributed-llm-dashboard",
+    "productName": "Distributed LLM Dashboard",
+    "files": [
+      "dist/**/*",
+      "electron/**/*"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "target": ["dmg", "zip"],
+      "category": "public.app-category.developer-tools"
+    },
+    "win": {
+      "target": ["nsis", "portable"]
+    }
+  }
+}
