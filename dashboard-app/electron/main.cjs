@@ -127,13 +127,28 @@ function startAgent(cfg) {
 function stopAgent() {
   return new Promise((resolve) => {
     if (!agentProcess) return resolve();
-    agentProcess.once('exit', () => resolve());
-    agentProcess.kill(IS_WIN ? undefined : 'SIGTERM');
+    // Capture this process, not the mutable `agentProcess` binding: by the
+    // time the fallback timer below fires, startAgent() may already have
+    // reassigned `agentProcess` to a brand-new child (the whole point of
+    // calling stopAgent() during an update). An uncleared timer that reads
+    // `agentProcess` at fire-time kills whatever is running *then* --
+    // which was this exact bug: the freshly-restarted node_agent got
+    // SIGTERM'd a few seconds after startup by a timer meant for the old one.
+    const proc = agentProcess;
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    proc.once('exit', finish);
+    proc.kill(IS_WIN ? undefined : 'SIGTERM');
     // Windows doesn't deliver SIGTERM to arbitrary processes; force-kill
     // after a grace period so an update never hangs waiting on it.
-    setTimeout(() => {
-      if (agentProcess) agentProcess.kill();
-      resolve();
+    const timer = setTimeout(() => {
+      if (!settled) proc.kill();
+      finish();
     }, 4000);
   });
 }
