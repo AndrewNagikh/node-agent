@@ -219,6 +219,53 @@ download/materialize runs asynchronously, in parallel with the primary
 model's per-stage prepare loop already on the session-create critical
 path.
 
+## G. Phase 3 cluster bring-up log (2026-07-19)
+
+First real-cluster speculative runs (smollm2-1.7b target / SmolLM2-360M
+draft, k=4, layout entry=node-b M1, middle=node-a M3, final=node-c 4070Ti).
+Getting from "works locally" to "works on the cluster" surfaced six real
+bugs, each found via the SPEC_DEBUG acceptance instrumentation:
+
+1. `e6c7b4fbf` -- missing `<algorithm>` include broke the GCC build.
+2. `706f379e3` -- Windows worker stdout/stderr silently discarded
+   (bInheritHandles=FALSE, no console); every Windows worker crash ever
+   had been invisible. Workers now log to models_dir/logs/worker_*.log,
+   readable via /debug/log?worker=role.
+3. `14f354f2c` -- draft load called split_gen_load_model, which in
+   layer-store mode ignores its path argument and reloaded the PRIMARY
+   model a second time on the same GPU (crash with no error output).
+4. `49e4528a6` -- the draft raced the token's own return path and lost by
+   ~1-2 ms most waves (hit,hit,...,miss forever pattern); entry now waits
+   up to 8 ms on a cv for the fa shipment, and final's draft compute
+   moved off the consumer thread (it was delaying every next wave).
+5. `e9ecbdf7b` -- two permanent-draft-death bugs: any KV gap killed the
+   draft forever (fixed with a confirmed-token journal that replays the
+   missing span), and RESET raced the prime over the slower bc path and
+   wiped it (RESET no longer touches draft state; the prime is
+   self-contained).
+6. `752dacaa4` + `6849b3225` -- the Phase 1 "sequential verify" limit was
+   self-imposed: hidden injection is ubatch-agnostic, so verify waves now
+   decode as ONE graph on final (n_ubatch 1->32, logits at all
+   positions; rejected KV tail handled by the existing rollback rule)
+   and on middle (waves up to 32 tokens).
+
+Measured (64-token runs, same prompt, entry_queue=0 both sides):
+baseline 22.5-27.3, speculative 40.8-45.7 tok/s -- **x1.64 median**,
+acceptance 2.0/wave (E=3.0 tok/wave), streams bit-identical to baseline.
+Later same-evening runs showed Wi-Fi variance exceeding the
+speculative-vs-baseline gap (baseline itself swung 22-34), so the x2
+gate needs a calmer network window and/or the remaining levers:
+- entry still decodes k+1 tokens as k+1 single-token graphs
+  (n_ubatch=1) and pays up to 8 ms cv-wait on a draft miss;
+- SmolLM2 pair acceptance is only ~50% at k=4; the validated Llama-3.2
+  3B/1B pair (85-90%) would lift E from ~3.0 to ~3.7-4.2;
+- adaptive-k / kill-switch (F.1) unimplemented -- misses still cost a
+  full verify wave.
+
+Phase 3 status: mechanism fully working end-to-end on the real cluster
+(acceptance, determinism, resident draft cache, all races fixed);
+benchmark gate pending a clean measurement window.
+
 Revised 2026-07-18 (implementation, `27a38b59c` then simplified in
 `190f5c604`): "must not block on draft readiness" from the original note
 above was wrong. Implemented as parallel-but-blocking instead:
