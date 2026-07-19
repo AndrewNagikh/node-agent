@@ -1,23 +1,23 @@
 # Task 15.1b — Hidden Gather Root Cause
 
-**Trace ID:** `trace-000001`
-**Status:** MISSING
-**Steady waves:** 0
+**Trace ID:** `trace-1784213813-0006`
+**Status:** PASS
+**Steady waves:** 32
 
 ## Gather decomposition (trace-based)
 
-**GATHER total:** — ms
+**GATHER total:** 2.963 ms
 
-**GPU wait (`LLAMA_BACKEND_SYNCHRONIZE`):** — ms
-**API access (`output_reorder` + pointer):** — ms
-**EMBD D2H async queue (`ggml_backend_tensor_get_async`):** — ms
-**Unattributed:** — ms
+**GPU wait (`LLAMA_BACKEND_SYNCHRONIZE`):** None ms
+**API access (`output_reorder` + pointer):** None ms
+**EMBD D2H async queue (`ggml_backend_tensor_get_async`):** None ms
+**Unattributed:** None ms
 
 ## Stage statistics
 
 | Stage | avg (ms) | min | max | p95 | contribution % |
 |-------|---------:|----:|----:|----:|---------------:|
-| GATHER (llama_get_embeddings) | None | None | None | None | None |
+| GATHER (llama_get_embeddings) | 2.963 | 1.078 | 6.009 | 5.328 | None |
 | LLAMA_BACKEND_SYNCHRONIZE | None | None | None | None | None |
 | LLAMA_GET_EMBEDDINGS_ACCESS | None | None | None | None | None |
 | EMBD_D2H_GET_ASYNC (decode) | None | None | None | None | None |

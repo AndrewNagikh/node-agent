@@ -236,7 +236,7 @@ profiles:
     session_create_timeout_s: 1200
     release_workers_between_models: true
     release_workers_before_run: true
-    purge_model_after_scenario: true
+    purge_model_after_scenario: false
     inter_scenario_cooldown_s: 15
     stop_if_not_fits: true
     perf_trace: true
