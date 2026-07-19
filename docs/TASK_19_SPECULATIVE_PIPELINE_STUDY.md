@@ -215,11 +215,21 @@ as long as the role assignment is stable across sessions, the draft's
 session. Two implementation requirements for Phase 2/3: (1) node_agent
 caches the loaded draft context keyed by (draft model id, node), reusing
 it across sessions while the node continues to hold `final`; (2) draft
-load for a *new* role assignment runs asynchronously, in parallel with
-the existing target-model install/prepare steps already on the session-
-create critical path — the session must not block on draft readiness.
-Until the draft is ready, the session runs on the F.1 fallback (n-gram or
-no speculation) and switches over transparently on the first wave after
-load completes (the verify-wave protocol is source-agnostic — it doesn't
-matter whether `verify_ids` came from a model or from n-gram lookup, so
-the switch requires no protocol change).
+download/materialize runs asynchronously, in parallel with the primary
+model's per-stage prepare loop already on the session-create critical
+path.
+
+Revised 2026-07-18 (implementation, `27a38b59c`): "must not block on
+draft readiness" from the original note above was wrong. Implemented as
+parallel-but-blocking instead: `setup_runtime_graph` kicks off the draft's
+`prepare_runtime_node` call (as an ordinary registered model, materialized
+the same way the primary model's per-stage layers are, via
+`runtime_role=pipeline_stage` over the full layer range on whichever node
+lands `final`) right alongside the primary model's own per-stage loop, then
+joins it before the configure phase -- even if the primary model's layers
+were already cached and that loop finished instantly. A session that asked
+for `speculative_draft_model_id` gets it or gets a clear degraded-to-no-
+speculation log line, never a silent skip because the main model happened
+to be warm. (1), the cross-session resident cache, is still open -- each
+session currently re-downloads/re-loads the draft on the final node even
+if unchanged from the last session.
