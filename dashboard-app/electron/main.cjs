@@ -216,7 +216,7 @@ function createWindow() {
     },
   });
   if (process.env.DASHBOARD_DEV) {
-    win.loadURL('http://localhost:5173');
+    win.loadURL('http://localhost:5834');
     win.webContents.openDevTools({ mode: 'detach' });
   } else {
     win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));

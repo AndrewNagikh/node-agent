@@ -6,7 +6,7 @@
   "type": "commonjs",
   "main": "electron/main.cjs",
   "scripts": {
-    "dev": "concurrently -k -n vite,electron -c blue,green \"vite\" \"wait-on tcp:5173 && cross-env DASHBOARD_DEV=1 electron .\"",
+    "dev": "concurrently -k -n vite,electron -c blue,green \"vite\" \"wait-on tcp:5834 && cross-env DASHBOARD_DEV=1 electron .\"",
     "build:renderer": "vite build",
     "dist:mac": "npm run build:renderer && electron-builder --mac",
     "dist:win": "npm run build:renderer && electron-builder --win"
