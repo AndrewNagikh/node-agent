@@ -219,17 +219,27 @@ download/materialize runs asynchronously, in parallel with the primary
 model's per-stage prepare loop already on the session-create critical
 path.
 
-Revised 2026-07-18 (implementation, `27a38b59c`): "must not block on
-draft readiness" from the original note above was wrong. Implemented as
-parallel-but-blocking instead: `setup_runtime_graph` kicks off the draft's
-`prepare_runtime_node` call (as an ordinary registered model, materialized
-the same way the primary model's per-stage layers are, via
-`runtime_role=pipeline_stage` over the full layer range on whichever node
-lands `final`) right alongside the primary model's own per-stage loop, then
-joins it before the configure phase -- even if the primary model's layers
-were already cached and that loop finished instantly. A session that asked
-for `speculative_draft_model_id` gets it or gets a clear degraded-to-no-
-speculation log line, never a silent skip because the main model happened
-to be warm. (1), the cross-session resident cache, is still open -- each
-session currently re-downloads/re-loads the draft on the final node even
-if unchanged from the last session.
+Revised 2026-07-18 (implementation, `27a38b59c` then simplified in
+`190f5c604`): "must not block on draft readiness" from the original note
+above was wrong. Implemented as parallel-but-blocking instead:
+`setup_runtime_graph` kicks off the draft fetch right after the final-role
+node is known, alongside the primary model's own per-stage prepare loop,
+then joins it before the configure phase -- even if the primary model's
+layers were already cached and that loop finished instantly. A session
+that asked for `speculative_draft_model_url` gets it or gets a clear
+degraded-to-no-speculation log line, never a silent skip because the main
+model happened to be warm.
+
+Also revised: no model registry involvement at all. The draft is a fixed
+model at a known URL, not something that needs manifest discovery or
+layer-range slicing -- `POST /draft/fetch {source_url, filename}` on the
+final node just does a plain `curl -o` (`dist_http_download_file`) into
+`models_dir/draft/`. That endpoint also skips the download outright when
+the destination file already exists, which resolves (1) -- the
+cross-session resident cache -- as a side effect: the draft simply stays
+on disk across sessions as long as the node keeps holding `final`, no
+extra caching logic needed. The one remaining gap is the draft
+llama_context itself: split_gen3_c currently reloads and re-creates it
+per process lifetime, not shared across separate final-worker process
+restarts on the same node -- fine for now since a worker process already
+lives for the session, not per-request.
