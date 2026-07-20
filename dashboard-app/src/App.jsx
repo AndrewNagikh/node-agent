@@ -1,17 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-
-const COLORS = {
-  bg: '#0a0e13',
-  panel: '#121820',
-  border: '#1f2934',
-  text: '#d7e0e8',
-  dim: '#7d8b99',
-  green: '#56e39a',
-  amber: '#ffc862',
-  red: '#ff6b6b',
-};
-
-const mono = { fontFamily: "'JetBrains Mono', monospace" };
+import { COLORS, mono } from './theme.js';
+import { fetchNodes, fetchNodeStatus, fetchModels, createSession, generate, destroySession } from './api.js';
+import Sidebar from './components/Sidebar.jsx';
+import ConfirmModal from './components/ConfirmModal.jsx';
+import Overview from './screens/Overview.jsx';
+import NodeDetail from './screens/NodeDetail.jsx';
+import Sessions from './screens/Sessions.jsx';
+import Models from './screens/Models.jsx';
 
 function Setup({ onSaved }) {
   const [nodeId, setNodeId] = useState('node-a');
@@ -34,33 +29,17 @@ function Setup({ onSaved }) {
       </div>
       <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12, color: COLORS.dim, marginBottom: 14 }}>
         node id
-        <select
-          value={nodeId}
-          onChange={(e) => setNodeId(e.target.value)}
-          style={{ background: COLORS.bg, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '8px 10px', color: COLORS.text, ...mono }}
-        >
+        <select value={nodeId} onChange={(e) => setNodeId(e.target.value)} style={{ background: COLORS.bg, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '8px 10px', color: COLORS.text, ...mono }}>
           <option value="node-a">node-a</option>
           <option value="node-b">node-b</option>
           <option value="node-c">node-c</option>
         </select>
       </label>
       <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12, color: COLORS.dim, marginBottom: 20 }}>
-        orchestrator url <span style={{ color: '#4a5866' }}>(пусто — взять из nodes.conf)</span>
-        <input
-          value={orchestrator}
-          onChange={(e) => setOrchestrator(e.target.value)}
-          placeholder="http://192.168.50.154:9000"
-          style={{ background: COLORS.bg, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '8px 10px', color: COLORS.text, ...mono }}
-        />
+        orchestrator url <span style={{ color: COLORS.dim3 }}>(пусто — взять из nodes.conf)</span>
+        <input value={orchestrator} onChange={(e) => setOrchestrator(e.target.value)} placeholder="http://192.168.50.154:9000" style={{ background: COLORS.bg, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '8px 10px', color: COLORS.text, ...mono }} />
       </label>
-      <button
-        onClick={save}
-        disabled={saving}
-        style={{
-          padding: '8px 16px', borderRadius: 6, fontWeight: 500, cursor: saving ? 'default' : 'pointer',
-          border: `1px solid rgba(86,227,154,.5)`, background: 'rgba(86,227,154,.12)', color: '#7bebac',
-        }}
-      >
+      <button onClick={save} disabled={saving} style={{ padding: '8px 16px', borderRadius: 6, fontWeight: 500, cursor: saving ? 'default' : 'pointer', border: '1px solid rgba(86,227,154,.5)', background: 'rgba(86,227,154,.12)', color: '#7bebac' }}>
         {saving ? 'Запускаю…' : 'Сохранить и запустить'}
       </button>
     </div>
@@ -70,11 +49,24 @@ function Setup({ onSaved }) {
 export default function App() {
   const [cfg, setCfg] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [agentRunning, setAgentRunning] = useState(false);
-  const [logLines, setLogLines] = useState([]);
-  const [updateState, setUpdateState] = useState(null); // null | 'pulling' | 'building' | 'restarting' | 'done' | 'failed'
-  const logRef = useRef(null);
 
+  const [nodes, setNodes] = useState([]);
+  const [orchestratorOnline, setOrchestratorOnline] = useState(false);
+  const [models, setModels] = useState([]);
+  const [sessions, setSessions] = useState([]);
+  const [genStates, setGenStates] = useState({});
+
+  const [view, setView] = useState('overview');
+  const [selectedNodeId, setSelectedNodeId] = useState(null);
+  const [confirm, setConfirm] = useState(null);
+
+  const [localAgentRunning, setLocalAgentRunning] = useState(false);
+  const [localLog, setLocalLog] = useState([]);
+  const [updateJobs, setUpdateJobs] = useState({});
+
+  const lastSessionRef = useRef(null);
+
+  // --- initial config + IPC subscriptions -------------------------------
   useEffect(() => {
     (async () => {
       const c = await window.dashboard.getConfig();
@@ -82,84 +74,242 @@ export default function App() {
       setLoading(false);
       if (c && c.nodeId) {
         const state = await window.dashboard.getAgentState();
-        setAgentRunning(state.running);
-        setLogLines(await window.dashboard.getAgentLog());
+        setLocalAgentRunning(state.running);
+        setLocalLog(await window.dashboard.getAgentLog());
       }
     })();
 
-    const offLog = window.dashboard.onAgentLogLine((line) => {
-      setLogLines((prev) => [...prev.slice(-1999), line]);
+    const offLog = window.dashboard.onAgentLogLine((line) => setLocalLog((prev) => [...prev.slice(-1999), line]));
+    const offState = window.dashboard.onAgentState((s) => setLocalAgentRunning(!!s.running));
+    const offUpdate = window.dashboard.onUpdateProgress((p) => {
+      setUpdateJobs((prev) => {
+        const nodeId = cfg?.nodeId;
+        if (!nodeId) return prev;
+        const existing = prev[nodeId] || { log: [] };
+        const next = { ...existing, state: p.state };
+        if (p.line) next.log = [...existing.log, p.line];
+        if (p.state === 'failed') next.error = p.line || 'update failed';
+        return { ...prev, [nodeId]: next };
+      });
     });
-    const offState = window.dashboard.onAgentState((s) => setAgentRunning(!!s.running));
-    const offUpdate = window.dashboard.onUpdateProgress((p) => setUpdateState(p.state));
     return () => {
       offLog();
       offState();
       offUpdate();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // --- cluster polling ----------------------------------------------------
   useEffect(() => {
-    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [logLines]);
+    if (!cfg?.orchestrator) return undefined;
+    let cancelled = false;
+
+    async function poll() {
+      let baseNodes = [];
+      try {
+        baseNodes = await fetchNodes(cfg.orchestrator);
+        if (!cancelled) setOrchestratorOnline(true);
+      } catch {
+        if (!cancelled) setOrchestratorOnline(false);
+      }
+
+      const enriched = await Promise.all(
+        baseNodes.map(async (n) => {
+          const node = { ...n, port: n.port };
+          try {
+            const status = await fetchNodeStatus(node);
+            return { ...node, agentOnline: true, status };
+          } catch {
+            return { ...node, agentOnline: false, status: null };
+          }
+        }),
+      );
+
+      const pipeline = lastSessionRef.current?.pipeline || [];
+      const withRole = enriched.map((n) => ({
+        ...n,
+        role: pipeline.find((p) => p.node_id === n.node_id)?.role,
+      }));
+
+      if (!cancelled) setNodes(withRole);
+
+      try {
+        const m = await fetchModels(cfg.orchestrator);
+        if (!cancelled) setModels(Array.isArray(m) ? m : []);
+      } catch {
+        /* orchestrator unreachable this cycle; keep last known models */
+      }
+    }
+
+    poll();
+    const id = setInterval(poll, 2500);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [cfg?.orchestrator, sessions.length]);
 
   if (loading) return null;
   if (!cfg) return <Setup onSaved={setCfg} />;
 
-  const runUpdate = async () => {
-    setUpdateState('pulling');
-    const res = await window.dashboard.runUpdate();
-    if (!res.ok) setUpdateState('failed');
+  // --- actions --------------------------------------------------------------
+
+  const openNode = (nodeId) => {
+    setSelectedNodeId(nodeId);
+    setView('node');
   };
 
-  const stateColor = { pulling: COLORS.amber, building: COLORS.amber, restarting: COLORS.amber, done: COLORS.green, failed: COLORS.red }[updateState];
-  const updateBusy = updateState && updateState !== 'done' && updateState !== 'failed';
+  const requestUpdate = (nodeId) => {
+    if (nodeId !== cfg.nodeId) return; // never remote
+    const usedBy = sessions.find((s) => (s.pipeline || []).some((p) => p.node_id === nodeId));
+    setConfirm({
+      title: `Обновить и перезапустить ${nodeId}?`,
+      body: `git pull + пересборка + рестарт node_agent на ${nodeId}.`,
+      warn: usedBy ? `Сессия ${usedBy.session_id} использует эту ноду — она прервётся.` : null,
+      okLabel: 'Обновить и перезапустить',
+      onConfirm: async () => {
+        setConfirm(null);
+        setUpdateJobs((prev) => ({ ...prev, [nodeId]: { state: 'pulling', log: [] } }));
+        await window.dashboard.runUpdate();
+      },
+    });
+  };
+
+  const requestDestroy = (sessionId) => {
+    setConfirm({
+      title: `Удалить сессию ${sessionId}?`,
+      body: 'POST /session/destroy — воркеры на всех нодах будут остановлены, KV-cache сброшен.',
+      okLabel: 'Удалить',
+      onConfirm: async () => {
+        setConfirm(null);
+        try {
+          await destroySession(cfg.orchestrator, sessionId);
+        } catch {
+          /* already gone server-side is fine */
+        }
+        setSessions((prev) => prev.filter((s) => s.session_id !== sessionId));
+        if (lastSessionRef.current?.session_id === sessionId) lastSessionRef.current = null;
+      },
+    });
+  };
+
+  const handleCreateSession = async ({ model, speculativeDraftModelUrl, speculativeDraftK }) => {
+    const res = await createSession(cfg.orchestrator, { model, speculativeDraftModelUrl, speculativeDraftK });
+    const session = {
+      session_id: res.session_id,
+      model,
+      pipeline: res.pipeline || [],
+      speculative: !!speculativeDraftModelUrl,
+      draftK: speculativeDraftK,
+    };
+    lastSessionRef.current = session;
+    setSessions((prev) => [...prev, session]);
+  };
+
+  const handleGenerate = async (sessionId) => {
+    const gs = genStates[sessionId] || { prompt: '' };
+    setGenStates((prev) => ({ ...prev, [sessionId]: { ...gs, running: true, error: null } }));
+    try {
+      const res = await generate(cfg.orchestrator, { sessionId, prompt: gs.prompt, maxTokens: 64 });
+      setGenStates((prev) => ({ ...prev, [sessionId]: { ...prev[sessionId], running: false, result: res } }));
+    } catch (e) {
+      setGenStates((prev) => ({ ...prev, [sessionId]: { ...prev[sessionId], running: false, error: e.message } }));
+    }
+  };
+
+  const setPrompt = (sessionId, value) => {
+    setGenStates((prev) => ({ ...prev, [sessionId]: { ...(prev[sessionId] || {}), prompt: value } }));
+  };
+
+  // Plain computed value, not useMemo: this function already sits after
+  // the loading/!cfg early returns below, so a hook here would change the
+  // number of hooks called between the "still loading" and "ready" renders
+  // -- exactly the Rules-of-Hooks violation that blanked the screen.
+  const genStatesForScreen = {};
+  for (const s of sessions) {
+    genStatesForScreen[s.session_id] = { ...(genStates[s.session_id] || { prompt: '' }), setPrompt };
+  }
+
+  const selectedNode = nodes.find((n) => n.node_id === selectedNodeId);
+  const titles = {
+    overview: ['Обзор кластера', 'GET /nodes + GET /status на каждом node_agent'],
+    sessions: ['Сессии', 'POST /session/create · /session/generate · /session/destroy'],
+    models: ['Модели', 'GET /models'],
+    node: selectedNode ? [selectedNode.node_id, `${selectedNode.host}:${selectedNode.port}`] : ['', ''],
+  };
+  const [titleMain, titleSub] = titles[view];
 
   return (
-    <div style={{ minHeight: '100vh', background: COLORS.bg, color: COLORS.text, padding: 24, boxSizing: 'border-box' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-        <div
-          style={{
-            width: 10, height: 10, borderRadius: '50%',
-            background: agentRunning ? COLORS.green : COLORS.red,
-          }}
-        />
-        <div style={{ fontWeight: 700, fontSize: 16, ...mono }}>{cfg.nodeId}</div>
-        <span style={{ fontSize: 12, color: COLORS.dim, ...mono }}>{agentRunning ? 'node_agent запущен' : 'node_agent остановлен'}</span>
-      </div>
-      <div style={{ fontSize: 11.5, color: COLORS.dim, marginBottom: 20, ...mono }}>
-        orchestrator: {cfg.orchestrator || '(не задан)'}
+    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', fontFamily: "'IBM Plex Sans',sans-serif", fontSize: 13, background: COLORS.bg }}>
+      <Sidebar
+        view={view}
+        setView={(v) => { setView(v); setSelectedNodeId(null); }}
+        nodes={nodes}
+        selectedNodeId={selectedNodeId}
+        openNode={openNode}
+        localNodeId={cfg.nodeId}
+        sessions={sessions}
+        models={models}
+      />
+
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '13px 22px', borderBottom: `1px solid ${COLORS.borderDim}`, background: COLORS.headerBg }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 600, color: COLORS.textHeader }}>{titleMain}</div>
+            <div style={{ ...mono, fontSize: 11, color: COLORS.dim2, marginTop: 2 }}>{titleSub}</div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 11px', border: `1px solid ${COLORS.border}`, borderRadius: 6, background: '#101720' }}>
+              <div style={{ width: 7, height: 7, borderRadius: '50%', background: nodes.every((n) => n.agentOnline) && nodes.length ? COLORS.green : COLORS.red }} />
+              <span style={{ ...mono, fontSize: 11.5, color: '#aeb9c4', whiteSpace: 'nowrap' }}>онлайн {nodes.filter((n) => n.agentOnline).length}/{nodes.length}</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 11px', border: `1px solid ${COLORS.border}`, borderRadius: 6, background: '#101720' }}>
+              <span style={{ ...mono, fontSize: 11.5, color: '#aeb9c4' }}>сессий: {sessions.length}</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 11px', border: `1px solid ${COLORS.border}`, borderRadius: 6, background: '#101720' }}>
+              <span style={{ ...mono, fontSize: 11.5, color: COLORS.dim2 }}>poll 2.5s</span>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ flex: 1, overflowY: 'auto', padding: '18px 22px' }}>
+          {view === 'overview' && (
+            <Overview
+              nodes={nodes}
+              localNodeId={cfg.nodeId}
+              openNode={openNode}
+              onUpdate={requestUpdate}
+              updateJobs={updateJobs}
+              orchestratorOnline={orchestratorOnline}
+              orchestratorUrl={cfg.orchestrator}
+            />
+          )}
+          {view === 'node' && selectedNode && (
+            <NodeDetail
+              node={selectedNode}
+              isLocal={selectedNode.node_id === cfg.nodeId}
+              localLog={localLog}
+              onUpdate={() => requestUpdate(selectedNode.node_id)}
+              updateJob={updateJobs[selectedNode.node_id]}
+              onBack={() => setView('overview')}
+            />
+          )}
+          {view === 'sessions' && (
+            <Sessions
+              sessions={sessions}
+              models={models}
+              onCreate={handleCreateSession}
+              onDestroy={requestDestroy}
+              onGenerate={handleGenerate}
+              genStates={genStatesForScreen}
+            />
+          )}
+          {view === 'models' && <Models models={models} />}
+        </div>
       </div>
 
-      <button
-        onClick={runUpdate}
-        disabled={updateBusy}
-        style={{
-          display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 16px', borderRadius: 6,
-          fontSize: 12.5, fontWeight: 500, cursor: updateBusy ? 'default' : 'pointer', marginBottom: 6,
-          border: `1px solid ${updateBusy ? 'rgba(255,200,98,.45)' : 'rgba(86,227,154,.45)'}`,
-          background: updateBusy ? 'rgba(255,200,98,.08)' : 'rgba(86,227,154,.08)',
-          color: updateBusy ? '#ffc862' : '#8fd9b0',
-        }}
-      >
-        {updateBusy ? `${updateState}…` : 'Обновить и перезапустить'}
-      </button>
-      {updateState && (
-        <div style={{ fontSize: 11.5, color: stateColor, marginBottom: 14, ...mono }}>статус обновления: {updateState}</div>
-      )}
-
-      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>Логи node_agent</div>
-      <div
-        ref={logRef}
-        style={{
-          background: '#0a0e13', border: `1px solid ${COLORS.border}`, borderRadius: 7, padding: '11px 14px',
-          height: 480, overflowY: 'auto', fontSize: 11.5, lineHeight: 1.6, ...mono,
-        }}
-      >
-        {logLines.map((l, i) => (
-          <div key={i} style={{ color: '#a9b8c6', whiteSpace: 'pre-wrap' }}>{l}</div>
-        ))}
-      </div>
+      <ConfirmModal confirm={confirm} onCancel={() => setConfirm(null)} onConfirm={() => confirm && confirm.onConfirm()} />
     </div>
   );
 }
