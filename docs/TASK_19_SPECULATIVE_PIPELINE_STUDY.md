@@ -290,3 +290,85 @@ llama_context itself: split_gen3_c currently reloads and re-creates it
 per process lifetime, not shared across separate final-worker process
 restarts on the same node -- fine for now since a worker process already
 lives for the session, not per-request.
+
+## H. Entry wait-window: adaptive policy + baseline bench (2026-07-21)
+
+Motivation: the fixed 8 ms bounded wait for a draft (bug #4 fix above)
+turned out to still be a fixed constant on a Wi-Fi link (node-b) whose
+RTT swings roughly 5-100+ ms within seconds. A burst window produced
+100% draft_miss for several seconds straight -- confirmed live (`ping -i
+0.2` to node-b showed a ~4s run of 7-140ms hops mid-series) -- which is
+what motivated making the wait adaptive instead of constant.
+
+**Mechanism** (`split_gen3_a.cpp`, commit `bcfb1468b`): `fa_draft_buffer`
+gained `draft_wait_estimator`, a 128-sample ring buffer of draft arrival
+latency (hit = actual wait time, miss = censored at the window used, i.e.
+"at least this long"). Recomputes `wait_window_ms = clamp(percentile +
+2ms margin, 4ms, 30ms)` every 32 samples (not every one, to avoid the
+window itself oscillating). Logs `wait_window/arrival_p50/arrival_p95/
+hit_rate` on every recompute.
+
+**Policy is swappable without a rebuild** (commit `f53f60983`) via
+`SPEC_WAIT_POLICY` on the entry node: `fixed:<ms>` or `p50`/`p80`/`p90`/
+`p95`/`p99` (default, matches the original hardcoded behavior).
+
+**Network observability** (`node_agent.cpp`, commit `843fe2ff4`): every
+node now backgrounds a 1/s ping of its peers' existing `/health`
+endpoint (peer list refreshed from the orchestrator's `/nodes` every
+~5s), tracked in a 128-sample ring per peer and exposed as
+`GET /network/stats` -> `{peers: {node_id: {rtt_p50_ms, rtt_p95_ms,
+rtt_p99_ms, jitter_ms, loss_pct, samples}}}`. No new wire protocol.
+Built specifically so a bench run can record the network state it
+actually ran under instead of assuming it was constant.
+
+**Baseline bench methodology**: llama-3.2-3b target / llama-3.2-1b
+draft, k=4, layout entry=node-b (Wi-Fi), middle=node-a, final=node-c.
+10 fixed prompts (prose/code/qa/email/history-ish mix, `max_tokens=64`
+each) run sequentially on one non-overlapping session per policy (never
+two concurrent sessions -- see the session-eviction methodology bug
+earlier in this doc), destroyed before the next policy's session is
+created. Full raw data, bench script, and prompt set:
+`docs/bench/2026-07-21_wait_policy/`.
+
+Results (2 replicated rounds; round 2 also has node-b's `/network/stats`
+view of its link to node-c, i.e. the RTT the draft actually had to
+cross):
+
+| policy | round | avg tok/s | hit_rate | net RTT p95 (node-b to node-c) |
+|---|---|---|---|---|
+| fixed:8  | 1 | 38.55 | 70.1% | not recorded |
+| fixed:8  | 2 | 36.48 | 72.0% | 18.65ms |
+| fixed:16 | 1 | 40.29 | 95.9% | not recorded |
+| fixed:16 | 2 | 45.81 | 97.0% | 13.11ms |
+| p80      | 1 | 43.04 | 85.2% | not recorded |
+| p80      | 2 | 44.53 | 82.8% | 16.01ms |
+| p95      | 1 | 33.52 | 85.5% | not recorded |
+| p95      | 2 | 40.20 | 87.2% | 14.68ms |
+
+Findings:
+- Higher hit_rate does not imply higher throughput: `fixed:16` at 96-97%
+  hit_rate only modestly beats `p80` at 83-85%, and in round 1 `p95`
+  (85.5% hit) was the slowest of all four despite a hit_rate on par with
+  `p80`. Speculative decoding here is a total-cost optimization
+  (wait cost vs. acceptance payoff), not an acceptance-maximization
+  problem.
+- `p80` beat `p95` in both rounds, and in round 2 did so *despite* running
+  under a worse-measured network (RTT p95 16.01ms vs 14.68ms) -- the one
+  comparison in this dataset that survives the network confound rather
+  than being explained by it.
+- `fixed:16` vs `fixed:8` and `fixed:16` vs `p80` are directionally
+  consistent across rounds but each time also came with a better-network
+  round for the winner, so those specific orderings are not yet
+  separated from network variance -- round 2's network wasn't constant
+  across the four policy runs (RTT p95 ranged 13.1-18.7ms across a
+  ~15-minute span), confirming the network itself needs to be logged
+  every time, not assumed constant.
+- Working conclusion: `p80` is the best-supported policy of the four
+  tested, adopted as current best-known (not declared final). `fixed:8`
+  (the original hardcoded behavior) is confirmed suboptimal.
+
+This table is the intended baseline for future comparison, not a final
+answer -- e.g. "throughput went from ~43 tok/s to N tok/s after the
+planner became network-aware" once that work (network-aware role
+placement, dynamic wave size) exists. Keep it even after a better policy
+is found.
