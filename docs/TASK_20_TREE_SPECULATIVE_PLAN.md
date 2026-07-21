@@ -31,6 +31,63 @@ single-stream pipeline leaves two of three nodes idle most of the time
 discussion, 2026-07-22). Tree/ensemble drafting is a way to spend that
 otherwise-wasted idle time on candidate generation instead of nothing.
 
+## 0.5 Central hypothesis: what actually has to improve
+
+The naive framing -- "a tree gives more acceptance, so it's faster" -- is
+wrong, and treating it as the project's success criterion is the single
+biggest risk in this plan. Acceptance length is not the thing that
+determines speedup; **tokens produced per unit of verify time is**:
+
+```
+throughput_ratio(strategy) = E(strategy) / T_verify(strategy)
+```
+
+where `E` is expected accepted tokens per wave and `T_verify` is the wall-
+clock cost of the batched verify call that resolves that wave. A tree only
+earns its complexity if:
+
+```
+E_tree(N) / T_verify_tree(N)   >   E_linear(k) / T_verify_linear(k)
+```
+
+by a real margin -- not if `E_tree > E_linear` alone. Worked example, same
+shape as the illustration this section is named after: verify cost goes
+from 18ms (linear) to 26ms (tree, +44%) and acceptance goes from 1.0
+tokens/wave to 1.3 (+30%). Ratio: `1.3/26 = 0.050` vs `1.0/18 = 0.056` --
+the tree is **slower** despite strictly higher acceptance, because verify
+cost grew faster than acceptance did. This is not a corner case to guard
+against after the fact; it is the thing Phase 0 exists to check.
+
+**Why there's reason for cautious optimism on `T_verify_tree`, but not
+certainty**: decode-time verify cost on our hardware is dominated by
+reading model weights (see the 2026-07-22 Qwen2.5-32B bandwidth analysis
+in TASK_19), which is largely *shared* across every token in a batch --
+going from a k+1 flat batch to an N-node tree increases compute (more
+attention/FFN FLOPs over more candidate tokens) without a proportional
+increase in weight bytes read, so `T_verify_tree(N)` should grow
+sub-linearly in N, not linearly. That is a reason to expect the ratio
+above can come out favorable -- it is not a reason to skip measuring it.
+
+**Go/no-go criteria, fixed before Phase 0 runs, not after**:
+Phase 0 (cheap, offline, no distributed code) gives `E_tree(N)/E_linear(k)`
+directly. Combine it with an *estimated* `T_verify_tree(N)/T_verify_linear(k)`
+(reasoned from the sub-linear-batching argument above, using our own
+measured linear verify costs from the Task 19 baseline bench as the
+reference point) to get a projected `throughput_ratio` before writing any
+tree infrastructure:
+
+| projected throughput_ratio | decision |
+|---|---|
+| < 1.10 | Stop. Not worth the KV/rollback/protocol complexity in section 4. |
+| 1.10 - 1.30 | Build the smallest possible Phase 1 prototype (depth 2, branching 2) *specifically* to replace the estimated `T_verify_tree` with a real measurement, then re-run this decision before committing to the full phase. |
+| >= 1.30 | Proceed to full Phase 1. |
+
+These exact numbers are starting points, not settled constants -- the
+discipline that matters is picking thresholds before Phase 0's results are
+in hand, so a disappointing result gets treated as an answer ("this
+doesn't pay off, stop here") rather than a prompt to keep tuning until it
+looks better.
+
 ## 1. What's already published, and what's actually reusable here
 
 | Method | Core idea | Requires training? | Distributed across nodes? | Relevant to us |
@@ -81,9 +138,13 @@ handful of prompts through Llama-3.2-1B (or another draft) generating top-2
 or top-3 candidates at each step instead of greedy top-1, and measure how
 often the *target* model's actual next token appears somewhere in that
 small candidate set vs. only in the single greedy pick. This is cheap
-(no distributed code needed, can run locally) and tells us whether tree
-branching is likely to move acceptance meaningfully before investing in the
-verification-side engineering. Skip Phase 1 if this doesn't show a real gap.
+(no distributed code needed, can run locally) and gives `E_tree(N)` and
+`E_linear(k)` directly.
+
+Do not stop at the acceptance number. Per section 0.5, combine it with the
+estimated verify-cost ratio and compute the projected `throughput_ratio`
+before deciding anything -- apply the go/no-go table from 0.5, not a
+standalone "did acceptance go up" judgment call.
 
 ### Phase 1 -- tree-structured verification (single draft model)
 The actual hard infrastructure work, isolated from the multi-source
@@ -145,12 +206,12 @@ broader direction is worth that investment.
   path. A tree with multiple simultaneously-live branches is a strictly
   harder version of the same problem -- budget real time for this, not
   just the happy path.
-- **Verify-side compute cost.** A tree verify call does more total work
-  than a linear k+1 batch (more candidate tokens per wave). Need to check
-  this doesn't push the "final" node's per-wave compute time past the
-  point where it stops being worth the extra acceptance -- same
-  cost-vs-payoff framing as the wait-window work, applied to tree size
-  instead of wait time.
+- **Verify-side compute cost.** This is not just a risk on this list -- it
+  is the project's central hypothesis, see section 0.5. Restated briefly
+  here as a reminder: a tree verify call does more total work than a
+  linear k+1 batch, and it is entirely possible for acceptance to go up
+  while throughput goes down if verify cost grows faster than acceptance
+  does. Do not evaluate Phase 0/1 results on acceptance alone.
 
 ## 5. Explicit non-goals for this task
 
