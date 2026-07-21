@@ -55,6 +55,26 @@ p95), this is plausibly the single largest latency lever available.
 **Verify:** A/B the same model+prompts with forced old vs new placement;
 compare tok/s and the entry-side arrival_p50/p95 logs.
 
+**Code directions:**
+- The split algorithm lives in
+  `llama.cpp/tools/distributed/orchestrator/layout_planner/layout_planner.cpp`;
+  node ordering is by score (comparator at ~line 185), and role follows
+  position in the resulting assignment list (`planned_layout_json`,
+  orchestrator.cpp ~1153: index 0 = entry, last = final).
+- Add an RTT fetch step to the session-create path in orchestrator.cpp:
+  for each candidate node, GET `http://host:port/network/stats` (endpoint
+  already exists in node_agent.cpp, struct `peer_rtt_tracker`) and build
+  the pairwise RTT matrix from the `peers` map (use `rtt_p95_ms`, fall
+  back to `rtt_p50_ms` when sample count is low).
+- Scoring: with 3-5 nodes, enumerate all role orderings (n! is tiny) and
+  pick the one minimizing `RTT(entry,middle) + RTT(middle,final) +
+  RTT(final,entry)` (the last term is the fa-link) subject to the
+  existing memory caps. Do not touch layer counts here -- that is Item 4.
+- Failure mode to handle: `/network/stats` returns empty peers on a
+  freshly restarted node (tracker warms up in ~10s of samples at 1/s).
+  Fall back to the current score-order placement when the matrix is
+  incomplete, and log which path was taken.
+
 ## Item 2 -- Direct final->client token return (adapt: Petals parallel send)
 
 **Proven where:** Petals servers send output activations "to both client
@@ -81,32 +101,50 @@ Interacts positively with speculation: the draft-vs-token race that the
 **Verify:** per-token latency histogram before/after; confirm identical
 output streams.
 
-## Item 3 -- Quantized activations on the wire (adapt: Petals dynamic blockwise quantization)
+**Code directions:**
+- Template is the existing fa-link end to end: orchestrator allocates the
+  port (`fa_port = pipe_base + stage_ptrs.size() + 2`, orchestrator.cpp
+  ~1792, passed via `cfg["fa_port"]` ~1966/1995), node_agent forwards it
+  to the worker args (`start_worker`, node_agent.cpp ~1770-1820, and
+  `dist_configure_req.fa_port/fa_host` parsing ~908), split_gen3_c dials
+  out. Clone this shape for a `tc_port` (token-to-client) link:
+  node_agent (client side, on the entry node) listens, final connects.
+- Final side: the token is selected in split_gen3_c's
+  `final_process_hidden_item` (both the verify-wave branch and the plain
+  branch already know the accepted/bonus token and its position -- the
+  same values that go into `st.draft_submit`). Ship `(pos, token_id)`
+  on the tc-link right there, BEFORE the chain-return send, mirroring
+  how `final_draft_and_ship` uses `split_ab_send_verify_ids`.
+- Client side: `run_local_pipeline_generate`'s speculative VERIFY loop
+  (node_agent.cpp ~1383) currently blocks in `pipeline_gen3_send_recv`.
+  Change to: wait on EITHER the tc-link delivery for the expected pos OR
+  the chain response (whichever first); the chain response still carries
+  `accepted_ids`/logits bookkeeping, so it must still be consumed -- the
+  win is issuing the NEXT verify earlier, not skipping the chain read.
+  This makes the loop two-phase; reuse the mailbox/cv idiom from
+  split_gen3_c's draft_thread rather than inventing a new one.
+- Determinism check: the token stream must be byte-identical with the
+  link on and off (this feature moves bytes, it must not change them).
 
-**Proven where:** Petals compresses inter-stage activations with dynamic
-blockwise quantization, roughly halving bandwidth needs "without
-noticeable effect on generation quality" (arXiv:2312.08361); weight-side
-8-bit/NF4 quantization ships in the same system.
+## Item 3 -- Quantized activations on the wire -- **DEMOTED, likely not worth it here**
 
-**Adaptation here:** quantize the hidden-state payload in
-split_tcp_send_hidden to int8 with per-block scales (block size ~64-128
-floats), dequantize on receive. ~4x smaller payloads (12.3KB -> ~3.2KB
-per token for 3B; proportionally more for larger models -- Qwen2.5-32B
-n_embd=5120 is ~20KB/token today).
+**Correction (2026-07-22 cleanup):** the original version of this item
+adapted Petals' dynamic blockwise activation quantization (arXiv:2312.08361)
+on general reasoning. But this project's own Performance Study already
+measured and RETIRED this direction: ROADMAP.md lists "Wire format / FP16
+hidden / binary protocol / zero-copy / TCP tuning (< 1% each)" under
+"Retired directions (do not reopen -- Study evidence)". The physics
+agrees: even Qwen2.5-32B's fp32 hidden state is ~20KB/token/hop, which is
+~0.16ms at 1Gbps -- noise against a 140ms/token decode and against the
+5-100ms RTT variance that actually hurts. Petals' quantization pays off on
+~100Mbit internet links, not on this LAN.
 
-**Effort:** medium -- symmetric encode/decode in the transport layer,
-behind a protocol version/flag so mixed-version clusters fail cleanly.
-**Trade-off to state honestly:** this changes computed values slightly,
-so the bit-identical-to-baseline determinism property validated in Task
-19 no longer holds in quantized mode. Petals' published result says
-quality impact is negligible, but ours must be re-verified (same-prompt
-output comparison + a small quality spot-check) before making it the
-default. Keep a switch.
-**Expected effect:** on a ~5-9ms-RTT link the serialization/transfer
-share per hop shrinks; matters most for prefill (n_tokens large) and for
-larger models; also reduces jitter sensitivity (fewer packets per wave).
-**Verify:** tok/s A/B plus output-quality comparison, per the trade-off
-above.
+**Kept only as a conditional footnote:** revisit ONLY if (a) the cluster
+ever runs over a much slower link (true WAN nodes), or (b) prefill of
+very long prompts on large models shows transfer time in a perf trace
+(n_tokens x 20KB adds up at prefill, unlike decode). Do not build this
+on latency grounds; the Study's own measurement stands until a trace
+shows otherwise.
 
 ## Item 4 -- Measured min-bottleneck layer partitioning (adapt: Petals/SWARM block assignment)
 
@@ -132,6 +170,28 @@ Qwen-32B already leans toward node-c, but the node-a/node-b 15/15 split
 ignores their ~8% score gap and, more importantly, ignores network
 placement (couples with Item 1).
 **Verify:** tok/s A/B on both a 3B and the 32B model.
+
+**Code directions:**
+- The current algorithm is one block:
+  `orchestrator/layout_planner/layout_planner.cpp` ~366, comment
+  "Score-proportional layer counts, then clamp to per-node memory caps"
+  (`exact = n_layer * scores[i] / score_total`, then cap-clamping with
+  slack redistribution ~439-458). Replace the proportional formula with
+  a measured-time objective; keep the cap-clamping loop as is.
+- Input data already flows: nodes report `decode_tps`/`prefill_tps` at
+  registration (node_agent.cpp `register_with_orchestrator` ~858; stored
+  orchestrator.cpp ~2802-2809 as `node.performance`). First version can
+  model per-layer time on node i as `1 / decode_tps_i` normalized --
+  i.e., minimize `sum_i(layers_i / decode_tps_i)` for the single-stream
+  latency mode instead of equalizing `layers_i / score_i`.
+- A later calibration pass can replace registration benchmarks with
+  measured per-stage wall times from real sessions: the timing fields
+  already returned per generate call (`decode_ms`) plus the entry-side
+  perf spans (`ENTRY_COMPUTE_BEGIN/END`) give per-stage numbers without
+  new instrumentation.
+- Keep the current formula behind the same layout-override mechanism
+  that already exists (`layout_override` in `build_and_store_install_plan`,
+  orchestrator.cpp ~684) so A/B is a config choice, not a rebuild.
 
 ## Item 5 -- Relayout hysteresis threshold (adapt: Petals >=20% rebalancing rule)
 
@@ -175,8 +235,9 @@ this only gates re-layout on session creation (live migration is Task
    template already proven in-repo by the fa-link.
 3. Item 4 + Item 5 (measured partitioning + hysteresis) -- planner
    depth, builds on Item 1's plumbing.
-4. Item 3 (wire quantization) -- solid win but carries the determinism
-   trade-off, so it goes last and stays switchable.
+4. Item 3 -- demoted per the Study's retired-directions evidence (see
+   the item); only revisit on WAN links or a prefill trace showing
+   transfer cost.
 
 Re-run the docs/bench/2026-07-21_wait_policy methodology (same prompts,
 sequential sessions, /network/stats recorded per run) after each item

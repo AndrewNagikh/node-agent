@@ -188,6 +188,68 @@ clear. Requires setting up a training pipeline this project doesn't
 currently have -- explicitly out of scope until Phases 1-2 prove the
 broader direction is worth that investment.
 
+## 3.5 Code anchors (added 2026-07-22 cleanup)
+
+Concrete entry points in this repo for each phase, so the work starts
+from known code rather than a fresh search:
+
+**Phase 0 (offline measurement)** -- no distributed code involved:
+- New script `scripts/spec_topk_offline.py`. Simplest harness: run two
+  local `llama-server` instances (binaries already built in
+  `llama.cpp/build/bin/`) -- target = full Llama-3.2-3B GGUF (one-time
+  ~2GB download; the cluster's layer-store copy is split and unusable
+  here), draft = the 1B GGUF already cached on node-c under
+  `models_dir/draft/`. Replay the 10 prompts from
+  `docs/bench/2026-07-21_wait_policy/bench_prompts.txt` greedily through
+  the target; at each position query the draft's `/completion` with
+  `n_probs >= 3` and record whether the target's actual token is in the
+  draft's top-1 / top-2 / top-3. Output: the `E_tree(N)/E_linear(k)`
+  ratio for section 0.5's go/no-go table.
+
+**Phase 1 (tree verification, single draft):**
+- Verify kernel: `split_gen3_c.cpp::final_verify_wave` -- currently one
+  `split_gen_decode_hidden(..., all_outputs=true)` over a LINEAR k+1
+  batch, logits read per position via `llama_get_logits_ith`. Tree
+  variant: represent branches as separate llama seq-ids sharing the
+  prefix KV (`llama_memory_seq_cp` to fork a branch, existing
+  `llama_memory_seq_rm` -- already used by our rollback -- to drop
+  losing branches). This gets tree attention from llama.cpp's normal
+  batch mechanics (per-token seq_id sets) without a custom mask kernel.
+  Note `cparams.n_ubatch` is already 32 (Task 19 bug #6 fix) -- tree
+  size must stay under it.
+- Wire format: drafts currently ship as a flat id list
+  (`split_ab_send_verify_ids`, cap `SPLIT_GEN_SPEC_MAX_K` in
+  transport/runtime_protocol.h). A tree needs one extra parallel array:
+  parent index per node (root = -1). Extend this message rather than
+  inventing a new one -- entry's consumer block
+  (`split_gen3_a.cpp::entry_process_work_item`, the
+  `SPLIT_GEN_CMD_VERIFY && fa_buf` block) and final's
+  `final_draft_and_ship` are the only two touchpoints.
+- Rollback/journal: `spec_confirmed` journal and
+  `split_gen_rollback_kv` in split_gen3_c.cpp assume a linear tail.
+  With seq-id branches, the accepted path merges into seq 0
+  (`llama_memory_seq_cp` back) and all other seqs are dropped -- the
+  journal itself stays position-keyed and unchanged.
+- Draft generation: `final_run_queued_session`'s draft_thread currently
+  produces k greedy tokens per wave. Tree drafting = top-N sampling at
+  chosen depths from the same draft ctx -- contained inside
+  split_gen3_c.cpp, no protocol impact beyond the message above.
+
+**Phase 2 (multi-source ensemble):**
+- `fa_draft_buffer` (split_gen3_a.cpp) is single-slot by design
+  ("final only ever has one outstanding draft"). Multi-source needs a
+  keyed buffer (source id -> slot) plus a merge step before the wave is
+  extended; `draft_wait_estimator` then needs a per-source or merged
+  policy decision (open question flagged in the phase).
+- Middle (split_gen3_b.cpp) has NO draft infrastructure today -- a
+  drafting middle node would borrow split_gen3_c's draft-ctx loading
+  (`--draft` arg plumbing in node_agent.cpp `start_worker` ~1813) and
+  the orchestrator's `/draft/fetch` endpoint (node_agent.cpp ~2565)
+  which is already node-agnostic.
+- Orchestrator: fa_port allocation (`orchestrator.cpp` ~1792) currently
+  wires exactly one final->entry link per session; N draft sources = N
+  allocated ports, same pattern.
+
 ## 4. Open risks / things to validate early, not assume
 
 - **KV memory cost of a tree.** Each branch needs its own KV slice while

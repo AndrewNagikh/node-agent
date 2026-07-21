@@ -51,18 +51,35 @@ Per `TARGET_70B_GOAL_AND_FEASIBILITY.md` §6: **L1** qwen3-14b → **L2** 30B-Mo
 
 [17.4](TASK_17_4_ENDPOINT_COMPUTE_INFLATION.md): measured breakdown of entry 3.5× / final 5.7× inflation, then graph capture/reuse behind a flag. Target ~70–75 tok/s TinyLlama (~55–60% of local — the architecture's single-stream limit, Study §13).
 
-### Phase 5 — Speculative decoding (the only multiplier)
+### Phase 5 — Speculative decoding (the only multiplier) — **DONE (mechanism), gate open**
 
-[Task 19](TASK_19_SPECULATIVE_PIPELINE_RESEARCH.md) research (placement, offline acceptance rates incl. 70B+1B pair, KV rollback, RFC-0014 sketch) → go/no-go → implementation. Expected ×1.5–2.5: 70B ~3.5 → **~6–8 tok/s**; amortizes fixed costs for many-node topologies.
+[Task 19](TASK_19_SPECULATIVE_PIPELINE_STUDY.md) shipped 2026-07-19..22: entry-buffered
+draft over a direct fa-link, batched verify waves, adaptive P80 wait window
+(`SPEC_WAIT_POLICY`), NORMAL/THROTTLED hysteresis, per-session auto-enable (no env
+flags), network observability (`/network/stats`). Measured ×1.5–1.64 (SmolLM2 and
+Llama-3.2 pairs; baseline bench in `bench/2026-07-21_wait_policy/`). The ×2 gate is
+NOT yet passed — carried into Task 21 verification. RFC-0014 write-up deferred.
+
+### Phase 5.5 — Active plans *(current)*
+
+| Plan | Scope | Doc |
+|------|-------|-----|
+| Task 21 | Adopt proven practices (Petals et al.): network-aware role placement, direct final→client token return, measured layer partitioning, relayout hysteresis | [TASK_21_PROVEN_PRACTICES_PLAN.md](TASK_21_PROVEN_PRACTICES_PLAN.md) |
+| Task 20 | Tree/ensemble speculative decoding (go/no-go gated on Phase 0 offline measurement) | [TASK_20_TREE_SPECULATIVE_PLAN.md](TASK_20_TREE_SPECULATIVE_PLAN.md) |
+
+Prior-art grounding for both: [research/2026-07-22_distributed_inference_survey/](research/2026-07-22_distributed_inference_survey/SURVEY.md).
 
 ### Phase 6 — Network era *(specify after L3 passes; design research may start earlier)*
 
 | Candidate | Scope |
 |-----------|-------|
-| Task 20.1 | Fault tolerance: layer replication, session re-planning, KV recovery (re-prefill vs checkpoint) |
-| Task 20.2 | Dynamic membership: join/leave, background redistribution |
-| Task 21 | Multi-tenant continuous batching (aggregate tok/s KPI) |
+| Task 22.1 | Fault tolerance: layer replication, session re-planning, KV recovery (re-prefill vs checkpoint; study Petals' dual client/server KV cache first — survey part2 §2.8) |
+| Task 22.2 | Dynamic membership: join/leave, background redistribution |
+| Task 23 | Multi-tenant continuous batching (aggregate tok/s KPI) |
 | — | Node classes Anchor/Capacity/Utility in planner (vision §3); microbatched pipeline prefill if 70B TTFT gate fails |
+
+*(Renumbered 2026-07-22: former "Task 20.1/20.2/21" placeholders became 22.1/22.2/23,
+since Task 20 and 21 numbers were taken by the active plans above.)*
 
 ---
 
