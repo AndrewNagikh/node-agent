@@ -167,12 +167,12 @@ comparison — full reasoning in the
 
 | Gate | Status |
 |---|---|
-| G0 Stranger test | Not attempted |
+| G0 Stranger test | **Dropped 2026-07-24** — no tester available, see `FIRST_SHOWCASE_CRITERIA.md` §4 |
 | G1 Capacity proof | **PASSED** (this report) |
 | G2 Speculation | Mechanism done, ×1.64 median measured, ×2 gate explicitly not required |
 | G3 Demo-grade reliability | **PASSED** via orchestrator API; dashboard-UI re-confirmation still pending |
 | G4 Network-aware placement | **DONE** (Task 21.1, live) |
-| G5 Reproducibility | Not started |
+| G5 Reproducibility | **Dropped 2026-07-24** — same reason as G0; bench scripts themselves already exist and were used for every rung in this report |
 | G6 Honest benchmark report | **This document** |
 | G7 Five-minute explanation | Not written |
 
