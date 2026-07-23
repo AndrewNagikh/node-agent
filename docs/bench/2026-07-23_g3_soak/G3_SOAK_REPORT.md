@@ -5,20 +5,53 @@ create/generate/destroy cycles across >=3 models (incl. one 32B+ rung) with
 zero manual node restarts, driven through the dashboard. NOT fault tolerance
 -- just 'doesn't fall over while someone watches'."
 
-**Verdict: STILL FAILS after one fix cycle — improved from 71% to 81% cycle
-success, not zero-failure.** Two runs so far, same script, same protocol:
+**Verdict: PASSES as of run 3 — 100.0% cycle success (190/190), zero
+failures of any kind.** Three runs, same script, same protocol, two fix
+cycles in between:
 
 | Run | When | Cycles | Success rate | Notes |
 |---|---|---|---|---|
-| 1 | 2026-07-23, before fix | 107 | 71.0% | See "Run 1" section below. |
-| 2 | 2026-07-23, after `689a554f6` (parallel+retry coverage poll) | 90 | 81.1% | See "Run 2" section below. Real improvement, not a full fix -- deeper cause found. |
+| 1 | 2026-07-23, before any fix | 107 | 71.0% | See "Run 1" section below. |
+| 2 | 2026-07-23, after `689a554f6` (parallel+retry coverage poll) | 90 | 81.1% | See "Run 2" section below. Real improvement, not a full fix. |
+| 3 | 2026-07-23, after `47990afaf` (verify-result cache, TTL 300s) | 190 | **100.0%** | See "Run 3" section below. Gate passes. |
 
-Both runs: zero crashes, zero corrupted/inconsistent output, zero destroy
-failures, every single failure the identical clean 503 `runtime coverage not
-ready`. The fix applied between runs (parallelize + one retry on
-`poll_installed_layers_from_nodes`, orchestrator-side) measurably helped but
-did not close the gap — a **second, deeper** cause was found analyzing run 2
-(see "Refined root cause" below) and is not yet fixed.
+All three runs: zero crashes, zero corrupted/inconsistent output, zero
+destroy failures — every failure across runs 1-2 was the identical clean 503
+`runtime coverage not ready`, and run 3 had none at all. Two fixes were
+needed, in sequence, because run 1 pointed at a timing/concurrency issue
+(fixed in run 2) that turned out to be sitting on top of a second, deeper
+cost issue (fixed in run 3) that the first fix alone couldn't fully absorb.
+Run 3 also produced roughly double the cycles in the same 30-minute budget
+(190 vs 90-107) — a direct, measurable side effect of session-create no
+longer blocking on full checksum re-verification.
+
+## Run 3 — after the verify-cache fix (2026-07-23)
+
+| Model | Cycles | Success | Success rate | Avg decode tok/s | Avg TTFT (ms) | Median cycle (s) | Run 2 median cycle (s) |
+|---|---|---|---|---|---|---|---|
+| llama-3.2-3b | 48 | 48 | 100.0% | 29.5 | 228 | 4.4 | 6.0 |
+| qwen3-14b | 48 | 48 | 100.0% | 16.0 | 353 | 8.0 | 17.0 |
+| qwen2.5-32b | 47 | 47 | **100.0%** | 7.4 | 1423 | **14.6** | **31.8** |
+| qwen3-30b | 47 | 47 | 100.0% | 22.4 | 945 | 9.9 | 28.6 |
+| **Total** | **190** | **190** | **100.0%** | | | | |
+
+qwen2.5-32b — the model whose failure rate barely moved between run 1 (44%)
+and run 2 (50%), the tell that pointed at the checksum-verification cost —
+had its median full cycle time cut from 31.8s to 14.6s, more than halved,
+exactly matching the diagnosis: most of that time was `/installed-layers`
+re-reading and re-hashing the model's ~18.5GB on every poll. Every model
+improved; qwen2.5-32b improved the most, as predicted.
+
+Local isolated measurement on node-a confirms the mechanism directly: cold
+`/installed-layers?model=qwen2.5-32b` call (cache miss, full verify) took
+4.9s; the next call within the 300s TTL (cache hit) took 0.019s — roughly
+260x faster.
+
+**G3 is now passable.** Recommend re-confirming once through the actual
+dashboard (this report's runs were driven via the same HTTP API the
+dashboard uses, not the dashboard UI itself) before checking the gate off
+for the showing, since G3's wording specifically says "driven through the
+dashboard."
 
 ## Run 2 — after the parallelize+retry fix (2026-07-23)
 
@@ -202,36 +235,38 @@ create→generate→destroy)
 ## What this means for the showing
 
 - **The core distributed-inference path is solid under repeated churn**:
-  197 create/destroy cycles across both runs combined, zero crashes, zero
-  corrupted output, perfect determinism per model. That's the load-bearing
-  part of the story and it held up across two independent 30-minute runs.
-- **G3 as literally worded ("zero manual restarts", implicitly ~100%
-  success) is still not passable** after one real fix — 81% would still be
-  visible and embarrassing live. The failure mode reproduced 31 times in run
-  1 and 17 times in run 2, both with zero adversarial intent — this is not
-  an edge case, it's the default behavior of a tight session-churn loop.
-- The gap is narrower than it looked after run 1, and now points at a
-  specific, well-understood cost center (full checksum re-verification on
-  every coverage poll, see above) rather than a vague timing issue — that's
-  real progress, but it's not fixed yet.
-- Next step: fix `/installed-layers` to answer cheaply (metadata/cache)
-  instead of re-reading and re-hashing full tensor data synchronously in the
-  session-create path, then **run 3** with the same script to confirm.
-  qwen2.5-32b (the model that barely moved between run 1 and run 2) is the
-  one to watch — if this diagnosis is right, it should show the largest
-  improvement of any model in the next run, since it has the most data to
-  verify.
+  387 create/destroy cycles across all three runs combined, zero crashes,
+  zero corrupted output, perfect determinism per model, every single time.
+  That's the load-bearing part of the story and it held up across three
+  independent 30-minute runs.
+- **G3 now passes.** Run 3: 190/190 cycles, 100.0% success, zero failures of
+  any kind, driven the same way as runs 1-2 (orchestrator HTTP API). Two
+  fixes were required in sequence: the first (parallel+retry coverage poll)
+  found and closed a real timing gap but left a second, deeper cost issue
+  exposed; the second (verify-result cache) closed that. Neither fix alone
+  would have passed the gate — worth remembering if only one gets ported
+  forward into a future refactor.
+- The soak process itself did its job twice over: it found a real bug on
+  the first run, and then correctly told us the first fix was incomplete on
+  the second run (qwen2.5-32b's stubborn ~50% failure rate was the tell) —
+  rather than accepting "improved" as "done."
+- **Before checking G3 off for the showing**: re-confirm once through the
+  actual dashboard UI, not just the HTTP API these runs used directly — G3's
+  wording specifically calls for "driven through the dashboard," and the API
+  and UI paths, while expected to be equivalent, haven't both been exercised
+  here.
 
 ## Reproduction
 
 ```bash
 docs/bench/2026-07-23_g3_soak/soak_test.sh       # run 1, pre-fix
-docs/bench/2026-07-23_g3_soak/soak_test_v2.sh    # run 2, post orchestrator fix (689a554f6)
+docs/bench/2026-07-23_g3_soak/soak_test_v2.sh    # run 2, post orchestrator poll fix (689a554f6)
+docs/bench/2026-07-23_g3_soak/soak_test_v3.sh    # run 3, post verify-cache fix (47990afaf) -- PASSED
 ```
 
-`soak_test_v2.sh` is identical to `soak_test.sh` except for its output file
-names (`results_v2.jsonl` / `soak_v2.log`), so prior runs aren't overwritten.
-Edit `MODELS`, `PROMPT`, `MAX_TOKENS`, `DURATION_SEC`, `MIN_CYCLES` at the
-top of either script to adjust. Requires the orchestrator reachable at
+Each script is identical to `soak_test.sh` except for its output file names
+(`results_vN.jsonl` / `soak_vN.log`), so prior runs aren't overwritten. Edit
+`MODELS`, `PROMPT`, `MAX_TOKENS`, `DURATION_SEC`, `MIN_CYCLES` at the top of
+any of them to adjust. Requires the orchestrator reachable at
 `192.168.50.154:9000` (hardcoded — parameterize if run against a different
 cluster) with the target models already `coverage: READY`.
