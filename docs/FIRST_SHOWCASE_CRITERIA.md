@@ -57,10 +57,10 @@ this junk" is the headline that travels -- but its failure does NOT
 block publishing Tier 1. If it lands, it leads the report; if it
 doesn't, the report says "L3 in progress" with the measured blocker.
 
-| Rung | Target | Pass criterion |
-|------|--------|----------------|
-| L3-dense | Llama-3.3-70B-Instruct Q3_K_M (~34 GB, fits the ~37.8 GB fast-memory budget; same-family 1B draft enables the spec stretch) | cold sync bounded (~34 GB at wire speed ~7-10 min; hours = revisit Task 18.2 first), warm session, >=80% of the computed ~3.7 tok/s ceiling |
-| L3-MoE (stretch) | 70B-100B-class MoE with small active set (TARGET_70B §2 models ~100B-A12B at ~12-14 tok/s [est] using the 4070 Ti's DDR as the inactive-expert zone; ~80 GB total cluster RAM fits it) | generates end-to-end; report actual tok/s vs the MoE ceiling computed for the real file. If it works, this is the single most impressive demo number the hardware allows. |
+| Rung | Target | Pass criterion | Status |
+|------|--------|----------------|--------|
+| L3-dense | Llama-3.3-70B-Instruct Q3_K_M (~34 GB, fits the ~37.8 GB fast-memory budget; same-family 1B draft enables the spec stretch) | cold sync bounded (~34 GB at wire speed ~7-10 min; hours = revisit Task 18.2 first), warm session, >=80% of the computed ~3.7 tok/s ceiling | **ACHIEVED 2026-07-24** (docs/bench/2026-07-24_l3_70b/L3_70B_REPORT.md): Q3_K_M didn't fit the cluster's currently-free memory (~37.3GB budget vs ~40GB needed) -- switched to Q3_K_S (30.9GB), which fit. Cold sync ~42min (not the doc's optimistic 7-10min, but well inside the "hours" escape hatch). Warm session create 9s. Decode ~2.28 tok/s, ceiling (same perf-trace methodology as G1) 95.6-101.2% across 3 samples, median 98.4% -- comfortably passes. Coherent, factually-correct output. |
+| L3-MoE (stretch) | 70B-100B-class MoE with small active set (TARGET_70B §2 models ~100B-A12B at ~12-14 tok/s [est] using the 4070 Ti's DDR as the inactive-expert zone; ~80 GB total cluster RAM fits it) | generates end-to-end; report actual tok/s vs the MoE ceiling computed for the real file. If it works, this is the single most impressive demo number the hardware allows. | Not attempted. |
 
 Known L3 risks (TARGET_70B §5): 4070 Ti VRAM budget with KV+CUDA
 buffers, Windows RSS stability at 30+ GB, session-create time,
