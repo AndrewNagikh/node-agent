@@ -41,6 +41,18 @@ function SessionCard({ session, onDestroy, onGenerate, genState }) {
           rows={3}
           style={{ background: COLORS.inputBg, border: `1px solid ${COLORS.border}`, borderRadius: 7, padding: '10px 12px', color: COLORS.text, ...mono, fontSize: 12, resize: 'vertical', outline: 'none' }}
         />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, color: COLORS.dim, ...mono }}>
+            max_tokens
+            <input
+              value={genState.maxTokens ?? 64}
+              onChange={(e) => genState.setMaxTokens(session.session_id, e.target.value)}
+              type="number"
+              min={1}
+              style={{ width: 80, background: COLORS.inputBg, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '5px 8px', color: COLORS.text, ...mono, fontSize: 12, outline: 'none' }}
+            />
+          </label>
+        </div>
         <div>
           <button
             onClick={() => onGenerate(session.session_id)}

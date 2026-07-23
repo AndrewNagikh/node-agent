@@ -57,6 +57,7 @@ export async function generate(orchestratorUrl, { sessionId, prompt, maxTokens }
     session_id: sessionId,
     prompt,
     max_tokens: maxTokens || 64,
+    chat: true,
   });
 }
 

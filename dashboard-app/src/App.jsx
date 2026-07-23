@@ -211,7 +211,8 @@ export default function App() {
     const gs = genStates[sessionId] || { prompt: '' };
     setGenStates((prev) => ({ ...prev, [sessionId]: { ...gs, running: true, error: null } }));
     try {
-      const res = await generate(cfg.orchestrator, { sessionId, prompt: gs.prompt, maxTokens: 64 });
+      const maxTokens = Number(gs.maxTokens) || 64;
+      const res = await generate(cfg.orchestrator, { sessionId, prompt: gs.prompt, maxTokens });
       setGenStates((prev) => ({ ...prev, [sessionId]: { ...prev[sessionId], running: false, result: res } }));
     } catch (e) {
       setGenStates((prev) => ({ ...prev, [sessionId]: { ...prev[sessionId], running: false, error: e.message } }));
@@ -222,13 +223,17 @@ export default function App() {
     setGenStates((prev) => ({ ...prev, [sessionId]: { ...(prev[sessionId] || {}), prompt: value } }));
   };
 
+  const setMaxTokens = (sessionId, value) => {
+    setGenStates((prev) => ({ ...prev, [sessionId]: { ...(prev[sessionId] || {}), maxTokens: value } }));
+  };
+
   // Plain computed value, not useMemo: this function already sits after
   // the loading/!cfg early returns below, so a hook here would change the
   // number of hooks called between the "still loading" and "ready" renders
   // -- exactly the Rules-of-Hooks violation that blanked the screen.
   const genStatesForScreen = {};
   for (const s of sessions) {
-    genStatesForScreen[s.session_id] = { ...(genStates[s.session_id] || { prompt: '' }), setPrompt };
+    genStatesForScreen[s.session_id] = { ...(genStates[s.session_id] || { prompt: '', maxTokens: 64 }), setPrompt, setMaxTokens };
   }
 
   const selectedNode = nodes.find((n) => n.node_id === selectedNodeId);
