@@ -55,6 +55,39 @@ measured-vs-ceiling naturally converges. G1's dense/MoE rungs run 3-4x
 faster per token, giving proportionally more room for scheduling overhead to
 show up as a gap.
 
+## External reference point: prima.cpp (cited, not run)
+
+prima.cpp ([Lizonghang/prima.cpp](https://github.com/Lizonghang/prima.cpp) /
+[OpenCPIL/prima.cpp](https://github.com/OpenCPIL/prima.cpp), ICLR 2026,
+[arXiv:2504.08791](https://arxiv.org/html/2504.08791v2)) is the closest
+published prior art — pipelined-ring parallelism + mmap disk offload +
+speculative decoding for heterogeneous home clusters. `PROJECT_VISION_DISTRIBUTED_NETWORK.md`
+originally called for running it ourselves on this cluster as an external
+baseline. **Decided not to**, for two concrete reasons found before
+attempting any setup:
+
+1. **Windows isn't supported.** prima.cpp's own docs list Linux/macOS/
+   Android/HarmonyOS; Windows is "on roadmap," not shipped. node-c in this
+   cluster is Windows (RTX 4070 Ti) — a real 3-node run isn't possible as-is
+   without a WSL2 workaround, which wasn't attempted.
+2. **Quantization support doesn't overlap.** prima.cpp supports Q4K/Q6K/Q80/
+   IQ1; everything measured in this project today used Q3_K. A "same file,
+   same hardware" comparison isn't available without downloading and
+   installing a second, larger quant just for this comparison.
+
+Instead, citing their own reported number as context: their paper's ~2 tok/s
+(674 ms/token TPOT) for a 70B model was measured on a **4-device** cluster
+(Mac M1 2.4GiB RAM; Linux/RTX 3070 8GB VRAM; Linux/RTX 2080Ti 11GB VRAM;
+HarmonyOS phone, no GPU) over Wi-Fi (320-610 Mbps, 3-7ms latency), with
+combined RAM+VRAM of **37 GiB — by their own description, insufficient for
+the full quantized model**, i.e. deliberately memory-constrained to exercise
+their disk-offload mechanism. This project's **2.28 tok/s** on a 3-device
+cluster with comfortable memory headroom (no disk offload involved) is in
+the same ballpark, but the setups differ enough (device count, GPU
+generation, memory pressure regime) that this is a directional reference
+point, not a controlled head-to-head. State it as such in the final G6
+report — don't claim a win or a loss from this pairing.
+
 ## Memory-budget investigation (context for the quant switch)
 
 Before switching to Q3_K_S, traced why the "fits ~37.8GB budget" assumption
