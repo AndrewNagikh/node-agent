@@ -83,6 +83,14 @@ models:
     filename: Qwen3-30B-A3B-Q4_K_M.gguf
     revision: main
 
+  qwen2_32b:
+    label: Qwen2.5-32B
+    model_id: qwen2.5-32b
+    family: qwen
+    repository: bartowski/Qwen2.5-32B-Instruct-GGUF
+    filename: Qwen2.5-32B-Instruct-Q4_K_M.gguf
+    revision: main
+
   gemma27b:
     label: Gemma3-27B
     model_id: gemma-3-27b

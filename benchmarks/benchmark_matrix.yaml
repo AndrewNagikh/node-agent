@@ -194,13 +194,14 @@ profiles:
       - qwen8b
       - qwen14b
       - qwen30b
+      - qwen2_32b
       - gemma27b
     cluster_sizes:
       - 3
     prompt_lengths:
       - 16
     generate_tokens:
-      - 32
+      - 64
     reset_before_run: true
     warmup_tokens: 4
     sync_timeout_s: 7200

@@ -1277,6 +1277,16 @@ def main() -> int:
     parser.add_argument("--resume", action="store_true", help="Resume from checkpoint in output dir")
     parser.add_argument("--resume-dir", help="Checkpoint directory for --resume")
     parser.add_argument("--no-verify", action="store_true", help="Disable session reuse verification")
+    parser.add_argument("--reset", action=argparse.BooleanOptionalAction, default=None,
+                        help="Override profile's reset_before_run (POST /models/{id}/reset, wipes and "
+                             "re-syncs the model before benchmarking). Default: use profile's own setting. "
+                             "--no-reset skips it entirely -- use when the model is already installed and "
+                             "verified; on homelab-size models a full reset+resync can add hours for no "
+                             "benefit if you only need a fresh measurement, not a fresh install.")
+    parser.add_argument("--purge", action=argparse.BooleanOptionalAction, default=None,
+                        help="Override profile's purge_model_after_scenario (deletes the model from every "
+                             "node once its scenarios finish). Default: use profile's own setting, which is "
+                             "True in most profiles. --no-purge keeps the model installed after the run.")
     parser.add_argument("--profile-runtime", action="store_true",
                         help="Enable Task 12 perf trace (DIST_PERF_TRACE=1) and merge decode timeline")
     args = parser.parse_args()
@@ -1298,6 +1308,10 @@ def main() -> int:
     defaults = matrix_doc.get("defaults", {})
     profiles = matrix_doc.get("profiles", {})
     profile = {**defaults, **profiles.get(args.profile, profiles.get("default", {}))}
+    if args.reset is not None:
+        profile["reset_before_run"] = args.reset
+    if args.purge is not None:
+        profile["purge_model_after_scenario"] = args.purge
     mode = args.mode or profile.get("mode", "default")
     if args.profile_runtime:
         os.environ["DIST_PERF_TRACE"] = "1"
