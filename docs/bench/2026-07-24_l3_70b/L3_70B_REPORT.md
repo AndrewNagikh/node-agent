@@ -55,6 +55,31 @@ measured-vs-ceiling naturally converges. G1's dense/MoE rungs run 3-4x
 faster per token, giving proportionally more room for scheduling overhead to
 show up as a gap.
 
+## Speculative decoding attempt: no speedup with the 1B draft
+
+Tried pairing this model with the same Llama-3.2-1B-Instruct draft used
+for the 3B/1B pair's ×1.64 result (dashboard testing, 2026-07-24,
+`speculative_draft_k=4`). Result: **2.2 tok/s, statistically the same
+as the non-speculative 2.28 tok/s above — no speedup.**
+
+Root cause, read directly from the entry node's `SPEC_DEBUG` log
+(`GET /debug/log?worker=entry`), not guessed:
+
+```
+SPEC_DEBUG entry: wait_window=10.0ms arrival_p50=8.0ms arrival_p95=8.0ms hit_rate=19% throttled=no
+```
+
+`hit_rate=19%` — the draft's proposed token matches the target's actual
+choice only ~1 in 5 times. At that acceptance rate the per-step draft +
+verify overhead outweighs the savings from the rare hits, netting no
+measurable speedup. This isn't a code bug (the pipeline behaves
+correctly) — it's a pair-mismatch result: same model *family* doesn't
+guarantee a compatible output distribution across a 70x size gap.
+Consistent with the pair-dependent acceptance already noted for G2
+(SmolLM2/1.7B: ~50% at k=4, also pair-dependent, `TASK_19_SPECULATIVE_PIPELINE_STUDY.md`)
+— this 1B/70B pair is simply worse than either of those. No other draft
+model was tried for this target.
+
 ## External reference point: prima.cpp (cited, not run)
 
 prima.cpp ([Lizonghang/prima.cpp](https://github.com/Lizonghang/prima.cpp) /
