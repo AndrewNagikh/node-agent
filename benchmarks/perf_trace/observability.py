@@ -184,8 +184,17 @@ def build_critical_path_doc(
         ab = _hop_ms(wave_ev, "entry", "ab")
         bc = _hop_ms(wave_ev, "middle", "bc")
 
-        sum_parts = [p for p in (entry_comp, ab, middle_comp, bc, final_comp, sampling) if p is not None]
-        serial_critical = round(sum(sum_parts), 3) if len(sum_parts) == 6 else None
+        # ab/bc/sampling kept for the row's own diagnostic fields below, but
+        # not summed here -- see the matching comment in
+        # metric_validation.compute_critical_path_tokens for why: they're
+        # nested/overlapping with entry_comp/final_comp under current
+        # instrumentation semantics, not independent sequential durations.
+        # (In practice this local value is overwritten by base_row's below
+        # when a matching wave is found, so this mirrors that fix rather
+        # than changing the actual output on its own -- kept correct here
+        # too so it isn't a live trap if that override logic ever changes.)
+        sum_parts = [p for p in (entry_comp, middle_comp, final_comp) if p is not None]
+        serial_critical = round(sum(sum_parts), 3) if len(sum_parts) == 3 else None
 
         row = {
             "WaveID": wave,

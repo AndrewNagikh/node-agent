@@ -247,6 +247,13 @@ def _is_wall_clock_skewed(
 ) -> bool:
     if wall_ms is None:
         return False
+    # A real critical path can't be zero or negative. Cross-node steady_clock
+    # origins (arbitrary per-process epoch, not wall-clock) routinely produce
+    # wildly negative diffs -- e.g. -11.8 billion ms observed on real
+    # hardware -- which the old "> MAX_REASONABLE" check never caught since
+    # it only guarded the too-large-positive direction.
+    if wall_ms <= 0:
+        return True
     if wall_ms > MAX_REASONABLE_WALL_CRITICAL_PATH_MS:
         return True
     reference = serial_critical_path_ms or sum_compute_ms
@@ -268,7 +275,11 @@ def _effective_critical_path_ms(
         return serial_critical_path_ms
     if sum_compute_ms is not None:
         return sum_compute_ms
-    return wall_ms
+    # wall_ms is known-skewed (garbage) and neither fallback is available
+    # (e.g. a wave missing one stage's *_COMPUTE_END span) -- UNKNOWN per
+    # the spec's own status vocabulary, not a best-effort guess using the
+    # value we just determined isn't trustworthy.
+    return None
 
 
 def compute_critical_path_tokens(
@@ -297,11 +308,29 @@ def compute_critical_path_tokens(
         middle_comp = _span_dur_ms(_events_for_wave(phase_events, wave, "middle"), "middle", "MIDDLE_COMPUTE_END")
         final_comp = _span_dur_ms(_events_for_wave(phase_events, wave, "final"), "final", "FINAL_COMPUTE_END")
 
+        # ab/bc/sampling are kept as diagnostic fields (useful for the
+        # separate hidden-transport breakdown reports) but are NOT summed
+        # into the critical path below. HIDDEN_TRANSFER's dur_us (ab/bc) is
+        # a legacy rollup of alloc+gather+copy+serialize -- see
+        # runtime_debug/hidden_transport_breakdown.cpp's
+        # hidden_pack_emit_breakdown_spans(), specifically legacy_serialize_us
+        # -- and SAMPLER_END is a sub-span nested inside FINAL_COMPUTE's own
+        # BEGIN..END window. Both are already counted inside entry_comp /
+        # final_comp respectively (each *_COMPUTE_END dur_us is the real
+        # elapsed time from that stage's own *_COMPUTE_BEGIN, which already
+        # encloses its gather/pack/send or sampling sub-steps). Summing them
+        # again on top double- (and for sampling, triple-) counts the same
+        # wall-clock window as if it were sequential, which is why the old
+        # formula produced a "critical path" LONGER than the real measured
+        # per-token time -- physically backwards for a ceiling estimate.
+        # Verified against a real captured wave (2026-07-23, qwen2.5-32b):
+        # old formula 216.6ms (-> 4.6 tok/s, below the real 6.4-7.4 tok/s
+        # measured) vs corrected 129.7ms (-> 7.7 tok/s, correctly >= measured).
         ab = _hop_ms(wave_ev, "entry", "ab")
         bc = _hop_ms(wave_ev, "middle", "bc")
         sampling = _span_dur_by_event(wave_ev, "SAMPLER_END")
 
-        serial_parts = [entry_comp, ab, middle_comp, bc, final_comp, sampling]
+        serial_parts = [entry_comp, middle_comp, final_comp]
         serial_critical = round(sum(serial_parts), 3) if all(p is not None for p in serial_parts) else None
 
         final_end_ts = None
