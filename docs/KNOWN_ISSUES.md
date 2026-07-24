@@ -52,20 +52,25 @@ whole tree, `e2e_common.h:843`, a local single-process test harness,
 **not** the `/session/generate` production path. The real generate
 loop always ran exactly `max_tokens` steps regardless of whether the
 model produced an end-of-turn token.
-**Fix (2026-07-24, `9a0e77acd`):** `run_local_pipeline_generate`
-(`node_agent.cpp`) now truncates `out_tokens` at the first
+**Fix, part 1 (2026-07-24, `9a0e77acd`):** `run_local_pipeline_generate`
+(`node_agent.cpp`) truncates `out_tokens` at the first
 `llama_vocab_is_eog()` token, using the same `tokenizer_service_vocab()`
 already loaded for chat-template application, right before returning to
 the orchestrator. Fixes the client-visible symptom completely.
-**Known limitation, not fixed:** this truncates the *output*, it doesn't
-stop the network round-trips early -- the wire protocol between
-entry/middle/final has no "stop now" signal, so middle/final still
-compute the full `max_tokens` steps even after the model would have
-stopped on its own. A real fix needs a protocol version bump touching
-all three pipeline stages; out of scope for this pass (no way to
-verify on node-b/c directly in this session). Wasted compute only,
-not a correctness issue.
-**Verified:** compiles clean on node-a; **not yet live-verified**
-through the dashboard (needs node-a/b/c + orchestrator all rebuilt and
-restarted with this commit, same deploy story as the chat-template fix).
-Confirm with the same "привет" prompt next session before closing this out for real.
+**Fix, part 2 (2026-07-24, `5fa62c19f`):** initially flagged the wasted
+middle/final compute as needing a wire-protocol version bump (deferred
+as task #38) -- turned out unnecessary. Entry already receives the
+sampled `token_id` on every response, so it can check
+`llama_vocab_is_eog()` itself and simply stop sending further
+`SPLIT_GEN_CMD_DECODE`/`VERIFY` requests, with no new field on the wire
+structs. Covers all three decode paths (synchronous, entry_queue +
+client_pipeline look-ahead, speculative wave loop); reuses the existing
+drain-pending path for the look-ahead case. `truncate_at_eog()` from
+part 1 stays as a correctness backstop, not the saving mechanism.
+**Verified:** both parts compile clean on node-a; **not yet
+live-verified** through the dashboard (needs node-a/b/c + orchestrator
+all rebuilt and restarted, same deploy story as the chat-template fix).
+Confirm with the same "привет" prompt next session before closing this
+out for real -- also worth confirming decode actually stops early
+(fewer network round-trips / faster wall-clock on a short reply) not
+just that the text looks right.
