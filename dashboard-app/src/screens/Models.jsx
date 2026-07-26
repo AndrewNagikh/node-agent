@@ -1,6 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { COLORS, mono } from '../theme.js';
-import { searchHuggingFace, fetchHuggingFaceFiles, registerModel } from '../api.js';
+import {
+  searchHuggingFace, fetchHuggingFaceFiles, registerModel,
+  fetchInstallPlan, startInstall, fetchJob, refreshCoverage,
+} from '../api.js';
 
 const STATUS_COLOR = {
   ready: COLORS.green,
@@ -9,6 +12,16 @@ const STATUS_COLOR = {
   installing: COLORS.amber,
   discovered: COLORS.dim,
 };
+
+const COVERAGE_COLOR = {
+  READY: COLORS.green,
+  PARTIAL: COLORS.amber,
+  DEGRADED: COLORS.redText,
+};
+
+function gb(bytes) {
+  return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+}
 
 // Verdicts come from the orchestrator and are estimates from file size alone
 // (see hf_fit_estimate in orchestrator.cpp). Labelled as estimates in the UI so
@@ -32,6 +45,157 @@ function quantLabel(filename) {
 
 function modelIdFor(filename) {
   return filename.replace(/\.gguf$/i, '').toLowerCase().replace(/[^a-z0-9._-]+/g, '-');
+}
+
+// One installed model: coverage state plus, when something is missing, a
+// repair action. Repair runs the same install-plan -> execute -> refresh
+// sequence that has to be done by hand otherwise.
+function InstalledModelRow({ model, orchestrator }) {
+  const [plan, setPlan] = useState(null);
+  const [job, setJob] = useState(null);
+  const [phase, setPhase] = useState('idle'); // idle|planning|running|refreshing|done|error
+  const [error, setError] = useState(null);
+  const cancelled = useRef(false);
+
+  useEffect(() => () => { cancelled.current = true; }, []);
+
+  const cov = model.coverage || {};
+  const covState = cov.state || null;
+  const missing = cov.missing_layers ?? 0;
+  const needsRepair = covState && covState !== 'READY';
+  const statusColor = STATUS_COLOR[model.status] || COLORS.dim;
+  const covColor = COVERAGE_COLOR[covState] || COLORS.dim3;
+
+  const repair = async () => {
+    setError(null);
+    setPhase('planning');
+    try {
+      const p = await fetchInstallPlan(orchestrator, model.model_id);
+      if (cancelled.current) return;
+      setPlan(p);
+
+      if (p.operationCount === 0) {
+        // Nothing to move -- coverage was stale rather than actually broken.
+        setPhase('refreshing');
+        await refreshCoverage(orchestrator, model.model_id);
+        setPhase('done');
+        return;
+      }
+
+      const started = await startInstall(orchestrator, model.model_id);
+      const jobId = started.job_id;
+      setPhase('running');
+
+      // Poll until the job settles. Transient poll failures are ignored --
+      // the orchestrator is busy doing the actual work.
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 2000));
+        if (cancelled.current) return;
+        let j = null;
+        try {
+          j = await fetchJob(orchestrator, jobId);
+        } catch {
+          continue;
+        }
+        setJob(j);
+        if (j.state === 'completed' || j.state === 'failed') {
+          if (j.state === 'failed') {
+            setError(j.error || 'установка завершилась с ошибкой');
+            setPhase('error');
+            return;
+          }
+          break;
+        }
+      }
+
+      setPhase('refreshing');
+      await refreshCoverage(orchestrator, model.model_id);
+      if (!cancelled.current) setPhase('done');
+    } catch (e) {
+      if (!cancelled.current) {
+        setError(e.message);
+        setPhase('error');
+      }
+    }
+  };
+
+  const busy = phase === 'planning' || phase === 'running' || phase === 'refreshing';
+  const pct = job && job.total > 0 ? Math.round((job.ready / job.total) * 100) : 0;
+
+  return (
+    <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: '13px 16px', display: 'flex', flexDirection: 'column', gap: 9 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <span style={{ ...mono, fontWeight: 700, fontSize: 13, color: COLORS.textBright, flex: 1, minWidth: 140 }}>
+          {model.model_id}
+        </span>
+        <span style={{ ...mono, fontSize: 11.5, color: COLORS.dim }}>{model.architecture || ''}</span>
+        {covState && (
+          <span style={{ ...mono, fontSize: 11, padding: '3px 10px', borderRadius: 4, border: `1px solid ${covColor}55`, color: covColor }}>
+            {covState}
+            {cov.total_layers ? ` ${cov.ready_layers}/${cov.total_layers}` : ''}
+          </span>
+        )}
+        <span style={{ ...mono, fontSize: 11, padding: '3px 10px', borderRadius: 4, border: `1px solid ${statusColor}55`, color: statusColor }}>
+          {model.status}
+        </span>
+        {/* Stays available while coverage is still short, so a repair that
+            only partially succeeded can be retried rather than looking done. */}
+        {(needsRepair || phase === 'error') && !busy && (
+          <button
+            onClick={repair}
+            disabled={busy}
+            style={{
+              padding: '4px 12px', borderRadius: 5, fontSize: 11, ...mono,
+              cursor: busy ? 'default' : 'pointer',
+              border: '1px solid rgba(255,176,66,.45)',
+              background: busy ? 'transparent' : 'rgba(255,176,66,.10)',
+              color: busy ? COLORS.dim : COLORS.amber,
+            }}
+          >
+            {busy ? '…' : 'восстановить'}
+          </button>
+        )}
+      </div>
+
+      {needsRepair && phase === 'idle' && missing > 0 && (
+        <div style={{ ...mono, fontSize: 10.5, color: COLORS.dim3 }}>
+          не хватает слоёв: {missing}
+        </div>
+      )}
+
+      {phase === 'planning' && (
+        <div style={{ ...mono, fontSize: 11, color: COLORS.dim }}>Считаю, что нужно доустановить…</div>
+      )}
+
+      {plan && (phase === 'running' || phase === 'refreshing' || phase === 'done') && (
+        <div style={{ ...mono, fontSize: 10.5, color: COLORS.dim3 }}>
+          {plan.downloads} загрузок · {plan.deletes} удалений · {gb(plan.downloadBytes)}
+        </div>
+      )}
+
+      {phase === 'running' && job && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          <div style={{ height: 5, background: '#101720', borderRadius: 3, overflow: 'hidden' }}>
+            <div style={{ width: `${pct}%`, height: '100%', background: COLORS.green, transition: 'width .3s' }} />
+          </div>
+          <div style={{ ...mono, fontSize: 10.5, color: COLORS.dim }}>
+            {job.ready}/{job.total} операций · {pct}%
+            {job.failed > 0 && <span style={{ color: COLORS.red }}> · ошибок: {job.failed}</span>}
+          </div>
+        </div>
+      )}
+
+      {phase === 'refreshing' && (
+        <div style={{ ...mono, fontSize: 11, color: COLORS.dim }}>Проверяю покрытие…</div>
+      )}
+      {phase === 'done' && (
+        <div style={{ ...mono, fontSize: 11, color: COLORS.green }}>
+          Восстановлено — статус обновится при следующем опросе
+        </div>
+      )}
+      {error && <div style={{ ...mono, fontSize: 11, color: COLORS.red }}>{error}</div>}
+    </div>
+  );
 }
 
 function FileRow({ file, repository, onRegister }) {
@@ -236,16 +400,9 @@ export default function Models({ models, orchestrator }) {
           {models.length === 0 && (
             <div style={{ ...mono, fontSize: 12, color: COLORS.dim2 }}>Реестр моделей пуст.</div>
           )}
-          {models.map((m) => {
-            const col = STATUS_COLOR[m.status] || COLORS.dim;
-            return (
-              <div key={m.model_id} style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: '13px 16px', display: 'flex', alignItems: 'center', gap: 14 }}>
-                <span style={{ ...mono, fontWeight: 700, fontSize: 13, color: COLORS.textBright, flex: 1 }}>{m.model_id}</span>
-                <span style={{ ...mono, fontSize: 11.5, color: COLORS.dim }}>{m.architecture || ''}</span>
-                <span style={{ ...mono, fontSize: 11, padding: '3px 10px', borderRadius: 4, border: `1px solid ${col}55`, color: col }}>{m.status}</span>
-              </div>
-            );
-          })}
+          {models.map((m) => (
+            <InstalledModelRow key={m.model_id} model={m} orchestrator={orchestrator} />
+          ))}
           <div style={{ ...mono, fontSize: 11, color: COLORS.dim3, padding: '4px 2px' }}>GET /models · poll 5s</div>
         </div>
       ) : (

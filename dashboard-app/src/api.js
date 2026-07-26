@@ -68,6 +68,48 @@ export const SESSION_PHASES = [
   ['ready', 'Готово'],
 ];
 
+// --- model install / repair -------------------------------------------
+//
+// Repair is the same three-step pipeline used by hand: compute what's
+// missing, run it, then re-check coverage. Kept as separate calls so the UI
+// can show the download size before starting and track the job while it runs.
+
+export async function fetchInstallPlan(orchestratorUrl, modelId) {
+  const res = await postJson(`${orchestratorUrl}/models/${modelId}/install-plan`, {});
+  const plan = res.install_plan || {};
+  const ops = plan.operations || [];
+  return {
+    operationCount: plan.operation_count ?? ops.length,
+    downloadBytes: plan.total_download_bytes ?? 0,
+    downloads: ops.filter((o) => o.action === 'DOWNLOAD').length,
+    deletes: ops.filter((o) => o.action === 'DELETE').length,
+  };
+}
+
+export async function startInstall(orchestratorUrl, modelId) {
+  return postJson(`${orchestratorUrl}/models/${modelId}/install/execute`, {});
+}
+
+export async function fetchJob(orchestratorUrl, jobId) {
+  const res = await fetch(`${orchestratorUrl}/jobs/${jobId}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const job = await res.json();
+  // The job reports per-node counters; the UI wants one number.
+  let total = 0;
+  let ready = 0;
+  let failed = 0;
+  for (const n of Object.values(job.nodes || {})) {
+    total += n.total_count || 0;
+    ready += n.ready_count || 0;
+    failed += n.failed_count || 0;
+  }
+  return { state: job.state, total, ready, failed, error: job.error || '' };
+}
+
+export async function refreshCoverage(orchestratorUrl, modelId) {
+  return postJson(`${orchestratorUrl}/models/${modelId}/coverage/refresh`, {});
+}
+
 export async function searchHuggingFace(orchestratorUrl, query, limit = 24) {
   const url = `${orchestratorUrl}/hf/search?limit=${limit}${query ? `&q=${encodeURIComponent(query)}` : ''}`;
   const res = await fetch(url);
