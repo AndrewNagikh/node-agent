@@ -72,12 +72,55 @@ Working principles for the implementation:
 5. **Return is free.** When the node comes back, the original layout resumes
    with no data movement. This is the acceptance test.
 
+## Sub-task: remove the three-node assumption from the tooling
+
+Nothing may be tied to a specific node count. Audited 2026-07-27; the result
+splits cleanly in two.
+
+**The runtime is already generic — no change needed.** Roles are assigned by
+position, not by name or count:
+
+```cpp
+if (i == 0)                          role = ENTRY;
+else if (i + 1 == stage_ptrs.size()) role = FINAL;
+else                                 role = MIDDLE;
+```
+
+Every size check is a *minimum* (`stages.size() < 2`, `node_map.size() < 1`),
+never a fixed value. The planner, layout, KV filter and pipeline all iterate
+over however many nodes exist. `node-a/b/c` appear nowhere in the runtime.
+
+**The tooling around it is hardcoded to exactly three named nodes, and must be
+fixed:**
+
+| Location | Problem |
+|---|---|
+| `scripts/common.sh:22` | key whitelist is literally `NODE_A_HOST\|NODE_A_PORT\|NODE_B_*\|NODE_C_*` — a `NODE_D_HOST` is **silently dropped** |
+| `scripts/common.sh:37-39` | `case node-a/node-b/node-c` mapping id → host; `node-d` yields nothing |
+| `run-agent.ps1:224` | `@{ "node-a"=9001; "node-b"=9002; "node-c"=9003 }` |
+| `nodes.conf.example` | exactly three slots |
+| `dashboard-app/src/App.jsx:36-38` | node id is a fixed three-option dropdown |
+
+So a fourth machine cannot join without editing code — and the failure is
+*silent*: the extra entry is filtered out, the agent starts with autodetected
+values, and nothing says why. The runtime would have accepted that node
+unchanged; the ceiling is entirely in the launchers and config.
+
+Fix: parse arbitrary `NODE_<ID>_HOST` / `NODE_<ID>_PORT` keys instead of an
+enumerated whitelist, derive the id→host mapping from whatever is present, and
+replace the dashboard dropdown with free text (or a list built from
+`nodes.conf`). Small, but it is a precondition for testing churn with anything
+other than this specific cluster.
+
+`test-cluster-e2e.cpp:320` asserts `pipeline.size() != 3` — that one is
+legitimate, it targets a fixed 3-node docker fixture.
+
 ## Open design questions
 
-- **Should a model run on a reduced node set at all?** Running 3-node models on
-  2 nodes needs a second, temporary layout while preserving the original — more
-  machinery, and it competes with principle 5. Probably not worth it until
-  stability is proven; note the decision either way.
+- **Should a model run on a reduced node set at all?** Running an N-node model
+  on fewer nodes needs a second, temporary layout while preserving the
+  original — more machinery, and it competes with principle 5. Probably not
+  worth it until stability is proven; note the decision either way.
 - **What legitimately justifies a relayout?** A node permanently leaving, a
   model being reinstalled, an explicit user request. Probably nothing else.
   Automatic optimisation for throughput has now been reverted twice (G4, Task
@@ -90,6 +133,9 @@ Working principles for the implementation:
 
 Not a code review — a measurement, run before this is called done:
 
+0. The tooling accepts a node count other than three (see sub-task above) —
+   otherwise every step below only ever proves something about this one
+   cluster.
 1. Cluster healthy, all models READY, note every layout.
 2. Stop one node. Confirm: no relayout, no deletion, models that do not need
    that node still serve.
