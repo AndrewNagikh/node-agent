@@ -55,11 +55,31 @@ export const SAMPLING_DEFAULTS = {
   seed: '',
 };
 
+// Human-readable labels for the phases the orchestrator reports while a
+// session is being created. Keys must match progress_set() in orchestrator.cpp.
+export const SESSION_PHASES = [
+  ['queued', 'Постановка в очередь'],
+  ['coverage_check', 'Проверка слоёв на нодах'],
+  ['services', 'Настройка сервисов'],
+  ['prepare_nodes', 'Загрузка весов на ноды'],
+  ['draft_fetch', 'Загрузка драфт-модели'],
+  ['spawn_workers', 'Запуск воркеров'],
+  ['await_workers', 'Ожидание готовности'],
+  ['ready', 'Готово'],
+];
+
+export async function fetchSessionProgress(orchestratorUrl, progressId) {
+  const res = await fetch(`${orchestratorUrl}/session/progress/${encodeURIComponent(progressId)}`);
+  if (!res.ok) return null;
+  return res.json();
+}
+
 export async function createSession(
   orchestratorUrl,
-  { model, speculativeDraftModelUrl, speculativeDraftK, sampling },
+  { model, speculativeDraftModelUrl, speculativeDraftK, sampling, progressId },
 ) {
   const body = { model };
+  if (progressId) body.progress_id = progressId;
   if (speculativeDraftModelUrl) {
     body.speculative_draft_model_url = speculativeDraftModelUrl;
     body.speculative_draft_k = Number(speculativeDraftK) || 4;

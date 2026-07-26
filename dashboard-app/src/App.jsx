@@ -1,6 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { COLORS, mono } from './theme.js';
-import { fetchNodes, fetchNodeStatus, fetchModels, createSession, generate, destroySession } from './api.js';
+import {
+  fetchNodes, fetchNodeStatus, fetchModels, createSession, generate, destroySession,
+  fetchSessionProgress,
+} from './api.js';
 import Sidebar from './components/Sidebar.jsx';
 import ConfirmModal from './components/ConfirmModal.jsx';
 import Overview from './screens/Overview.jsx';
@@ -59,6 +62,7 @@ export default function App() {
   const [view, setView] = useState('overview');
   const [selectedNodeId, setSelectedNodeId] = useState(null);
   const [confirm, setConfirm] = useState(null);
+  const [createProgress, setCreateProgress] = useState(null);
 
   const [localAgentRunning, setLocalAgentRunning] = useState(false);
   const [localLog, setLocalLog] = useState([]);
@@ -194,13 +198,46 @@ export default function App() {
     });
   };
 
+  // Session creation is one long blocking call on the orchestrator, so the
+  // progress id is generated here and polled in parallel with the request.
   const handleCreateSession = async ({ model, speculativeDraftModelUrl, speculativeDraftK, sampling }) => {
-    const res = await createSession(cfg.orchestrator, {
-      model,
-      speculativeDraftModelUrl,
-      speculativeDraftK,
-      sampling,
-    });
+    const progressId = `ui-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setCreateProgress({ phase: 'queued', detail: '', step: 0, total: 0, elapsed_ms: 0 });
+
+    let polling = true;
+    const poll = async () => {
+      while (polling) {
+        try {
+          const p = await fetchSessionProgress(cfg.orchestrator, progressId);
+          if (p && polling) setCreateProgress(p);
+          if (p && (p.done || p.failed)) break;
+        } catch {
+          /* orchestrator busy inside the blocking create -- keep polling */
+        }
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    };
+    poll();
+
+    try {
+      const res = await createSession(cfg.orchestrator, {
+        model,
+        speculativeDraftModelUrl,
+        speculativeDraftK,
+        sampling,
+        progressId,
+      });
+      polling = false;
+      setCreateProgress(null);
+      return finishCreateSession(res, { model, speculativeDraftModelUrl, speculativeDraftK, sampling });
+    } catch (e) {
+      polling = false;
+      setCreateProgress(null);
+      throw e;
+    }
+  };
+
+  const finishCreateSession = (res, { model, speculativeDraftModelUrl, speculativeDraftK, sampling }) => {
     const session = {
       session_id: res.session_id,
       model,
@@ -349,6 +386,7 @@ export default function App() {
               onDestroy={requestDestroy}
               onGenerate={handleGenerate}
               genStates={genStatesForScreen}
+              createProgress={createProgress}
             />
           )}
           {view === 'models' && <Models models={models} />}

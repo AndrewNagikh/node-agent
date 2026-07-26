@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { COLORS, mono, roleColor } from '../theme.js';
-import { SAMPLING_DEFAULTS } from '../api.js';
+import { SAMPLING_DEFAULTS, SESSION_PHASES } from '../api.js';
 
 function SessionCard({ session, onDestroy, onGenerate, genState }) {
   const pipe = session.pipeline || [];
@@ -207,7 +207,68 @@ function ParamField({ label, value, onChange, step, min, max, placeholder, width
   );
 }
 
-export default function Sessions({ sessions, models, onCreate, onDestroy, onGenerate, genStates }) {
+// Phase-by-phase view of a session being created. The orchestrator does this
+// work inside one blocking call, so phases are polled separately by correlation
+// id rather than streamed from the response.
+function CreateProgress({ progress }) {
+  const activeIdx = SESSION_PHASES.findIndex(([key]) => key === progress.phase);
+  const elapsed = progress.elapsed_ms != null ? (progress.elapsed_ms / 1000).toFixed(1) : null;
+
+  return (
+    <div style={{
+      background: COLORS.logBg, border: `1px solid ${COLORS.borderDim}`, borderRadius: 8,
+      padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <span style={{ fontSize: 12.5, color: COLORS.textHeader, fontWeight: 500 }}>
+          Создание сессии
+        </span>
+        {elapsed && (
+          <span style={{ ...mono, fontSize: 11, color: COLORS.dim3, marginLeft: 'auto' }}>
+            {elapsed}s
+          </span>
+        )}
+      </div>
+
+      {SESSION_PHASES.filter(([key]) => key !== 'ready').map(([key, label], i) => {
+        const isDone = activeIdx > i || progress.phase === 'ready';
+        const isActive = activeIdx === i;
+        // draft_fetch only happens for speculative sessions; don't imply it
+        // was skipped in error when it never applied.
+        const dim = !isDone && !isActive;
+        return (
+          <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 11.5 }}>
+            <span style={{
+              width: 13, textAlign: 'center', ...mono, fontSize: 11,
+              color: isDone ? COLORS.green : isActive ? COLORS.greenText : COLORS.dim3,
+            }}>
+              {isDone ? '✓' : isActive ? '▸' : '·'}
+            </span>
+            <span style={{ color: dim ? COLORS.dim3 : isActive ? COLORS.text : COLORS.dim }}>
+              {label}
+            </span>
+            {isActive && progress.total > 0 && (
+              <span style={{ ...mono, fontSize: 10.5, color: COLORS.dim3 }}>
+                {progress.step}/{progress.total}
+              </span>
+            )}
+            {isActive && progress.detail && (
+              <span style={{ ...mono, fontSize: 10.5, color: COLORS.dim3, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {progress.detail}
+              </span>
+            )}
+          </div>
+        );
+      })}
+
+      {progress.failed && (
+        <div style={{ ...mono, fontSize: 11, color: COLORS.red }}>{progress.error}</div>
+      )}
+    </div>
+  );
+}
+
+export default function Sessions({ sessions, models, onCreate, onDestroy, onGenerate, genStates, createProgress }) {
   const [newModel, setNewModel] = useState('');
   const [draftUrl, setDraftUrl] = useState('');
   const [draftK, setDraftK] = useState('4');
@@ -349,6 +410,7 @@ export default function Sessions({ sessions, models, onCreate, onDestroy, onGene
         >
           {creating ? 'Создаю…' : 'Создать сессию'}
         </button>
+        {creating && createProgress && <CreateProgress progress={createProgress} />}
         {createError && <div style={{ ...mono, fontSize: 11, color: COLORS.red }}>{createError}</div>}
         <div style={{ ...mono, fontSize: 10.5, color: COLORS.dim3 }}>layout по нодам выберет оркестратор по score</div>
       </div>
