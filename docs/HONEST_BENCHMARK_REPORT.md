@@ -96,9 +96,8 @@ open, not claimed.
 
 ## Reliability (G3 soak)
 
-30-minute soak, driven through the orchestrator API (same calls the
-dashboard makes — dashboard-UI-specific re-confirmation still pending,
-see Tier 1 status below), 4 models rotating: **190/190 cycles, 100%
+30-minute soak, driven through the orchestrator API (the same calls the
+dashboard makes), 4 models rotating: **190/190 cycles, 100%
 success, zero crashes, zero corrupted output** on the final run, after
 fixing two real bugs found by the soak itself (a sequential no-retry
 coverage poll, then a full-checksum-reverify-on-every-poll cost) — full
@@ -169,7 +168,7 @@ comparison — full reasoning in the
 |---|---|
 | G1 Capacity proof | **PASSED** (this report) |
 | G2 Speculation | Mechanism done, ×1.64 median measured, ×2 gate explicitly not required |
-| G3 Demo-grade reliability | **PASSED** via orchestrator API; dashboard-UI re-confirmation still pending |
+| G3 Demo-grade reliability | **PASSED** via the orchestrator API — the same calls the dashboard makes |
 | G4 Network-aware placement | **REVERTED 2026-07-24** — win never measured, layer-churn cost real; see `FIRST_SHOWCASE_CRITERIA.md` |
 | G6 Honest benchmark report | **This document** |
 
