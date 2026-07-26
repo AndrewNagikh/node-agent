@@ -40,6 +40,15 @@ notice a change at all). Real topology changes still bypass it, and it
 can never put a GPU node behind a CPU-only one. Covered by
 `test-layout-hysteresis`, which asserts repeated jitter is a fixed
 point.
+**Extended (2026-07-24, `d274f4c8e`):** Task 21.4 made layer *counts*
+follow measured `decode_tps`, which is a live measurement with the same
+drift problem -- so counts got their own hysteresis at 20% predicted
+single-stream gain (Petals' rebalancing threshold, arXiv:2312.08361),
+higher than the 10% used for role ordering because a count change moves
+weights rather than just relabelling a stage. **Not yet verified on the
+cluster** (unavailable when this landed): needs the tok/s A/B on 3B and
+32B that `TASK_21_PROVEN_PRACTICES_PLAN.md` Item 4 specifies, so this
+does not repeat G4's mistake of shipping an unmeasured win.
 
 ---
 
