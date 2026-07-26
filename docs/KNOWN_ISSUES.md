@@ -12,6 +12,28 @@ how it was found, root cause (if known), status.
 
 ---
 
+## DESIGN REVERSALS (logged so the reasoning isn't lost)
+
+### RTT-aware entry placement (Task 21.1 / G4) removed
+**Symptom that exposed it:** recurring `runtime coverage not ready` on
+session-create, and models sitting in `DEGRADED` coverage despite having
+every layer installed. On 2026-07-24 five of fourteen models were
+DEGRADED at once (`llama-3.2-1b`, `llama-3.2-3b`, `phi-3.5-mini`,
+`qwen3-14b` -- pure desync, install-plans were 100% DELETE with 0 bytes
+to download; `gemma-3-1b` also had one genuinely missing layer).
+**Root cause:** the planner chose the entry node by measured p95 RTT to
+final. Home-network RTT is noisy and non-stationary, so entry moved
+between sessions with no durable reason, and each move orphaned that
+model's installed layers on the previously-chosen node.
+**Decision (2026-07-24, `65ed1f60a`):** reverted to score-order entry
+placement. The latency win was never actually measured -- the A/B in
+`TASK_21_PROVEN_PRACTICES_PLAN.md` Item 1 was specified but never run --
+while the layer-churn cost was real and repeated. Moving layer placement
+is expensive; keeping it stable is free. `/network/stats` is untouched
+and still available for observability.
+
+---
+
 ## DISMISSED
 
 ### Decode speed anomaly: 2.1 tok/s on llama-3.2-3b (expected ~16-29)

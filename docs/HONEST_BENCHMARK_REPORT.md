@@ -170,7 +170,7 @@ comparison — full reasoning in the
 | G1 Capacity proof | **PASSED** (this report) |
 | G2 Speculation | Mechanism done, ×1.64 median measured, ×2 gate explicitly not required |
 | G3 Demo-grade reliability | **PASSED** via orchestrator API; dashboard-UI re-confirmation still pending |
-| G4 Network-aware placement | **DONE** (Task 21.1, live) |
+| G4 Network-aware placement | **REVERTED 2026-07-24** — win never measured, layer-churn cost real; see `FIRST_SHOWCASE_CRITERIA.md` |
 | G6 Honest benchmark report | **This document** |
 
 (Former G0/G5/G7 -- stranger test, reproducibility, five-minute
