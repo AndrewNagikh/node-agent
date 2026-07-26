@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { COLORS, mono, roleColor } from '../theme.js';
+import { SAMPLING_DEFAULTS } from '../api.js';
 
 function SessionCard({ session, onDestroy, onGenerate, genState }) {
   const pipe = session.pipeline || [];
@@ -13,6 +14,13 @@ function SessionCard({ session, onDestroy, onGenerate, genState }) {
         {session.speculative && (
           <span style={{ ...mono, fontSize: 10.5, padding: '2px 8px', borderRadius: 4, border: '1px solid rgba(86,227,154,.4)', color: COLORS.green }}>
             speculative k={session.draftK}
+          </span>
+        )}
+        {session.sampling && Number(session.sampling.temp) > 0 && (
+          <span style={{ ...mono, fontSize: 10.5, padding: '2px 8px', borderRadius: 4, border: '1px solid #2a3542', color: COLORS.dim }}>
+            temp {session.sampling.temp}
+            {Number(session.sampling.top_p) < 1 ? ` · top_p ${session.sampling.top_p}` : ''}
+            {session.sampling.seed !== '' ? ` · seed ${session.sampling.seed}` : ''}
           </span>
         )}
         <button
@@ -91,21 +99,52 @@ function SessionCard({ session, onDestroy, onGenerate, genState }) {
   );
 }
 
+// Compact labelled number input, matching the form's existing mono/dark style.
+function ParamField({ label, value, onChange, step, min, max, placeholder, width = 78 }) {
+  return (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, color: COLORS.dim }}>
+      {label}
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        type="number"
+        step={step}
+        min={min}
+        max={max}
+        placeholder={placeholder}
+        style={{
+          width, background: COLORS.inputBg, border: `1px solid ${COLORS.border}`, borderRadius: 6,
+          padding: '6px 8px', color: COLORS.text, ...mono, fontSize: 12, outline: 'none',
+        }}
+      />
+    </label>
+  );
+}
+
 export default function Sessions({ sessions, models, onCreate, onDestroy, onGenerate, genStates }) {
   const [newModel, setNewModel] = useState('');
   const [draftUrl, setDraftUrl] = useState('');
   const [draftK, setDraftK] = useState('4');
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState(null);
+  const [sampling, setSampling] = useState(SAMPLING_DEFAULTS);
+  const [showSampling, setShowSampling] = useState(false);
 
   const installed = models.filter((m) => m.status && m.status !== 'discovered');
+  const setParam = (key) => (value) => setSampling((prev) => ({ ...prev, [key]: value }));
+  const greedy = Number(sampling.temp) <= 0;
 
   const create = async () => {
     if (!newModel) return;
     setCreating(true);
     setCreateError(null);
     try {
-      await onCreate({ model: newModel, speculativeDraftModelUrl: draftUrl, speculativeDraftK: draftK });
+      await onCreate({
+        model: newModel,
+        speculativeDraftModelUrl: draftUrl,
+        speculativeDraftK: draftK,
+        sampling,
+      });
     } catch (e) {
       setCreateError(e.message);
     } finally {
@@ -165,6 +204,55 @@ export default function Sessions({ sessions, models, onCreate, onDestroy, onGene
             style={{ width: 90, background: COLORS.inputBg, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '8px 10px', color: COLORS.text, ...mono, fontSize: 12, outline: 'none' }}
           />
         </label>
+
+        <div style={{ borderTop: `1px solid ${COLORS.borderDim}`, paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <button
+            onClick={() => setShowSampling((v) => !v)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8, padding: 0, border: 'none',
+              background: 'transparent', cursor: 'pointer', color: COLORS.dim, fontSize: 11.5, ...mono,
+            }}
+          >
+            <span style={{ color: COLORS.dim3 }}>{showSampling ? '▾' : '▸'}</span>
+            сэмплинг
+            <span style={{
+              padding: '2px 8px', borderRadius: 4, fontSize: 10.5,
+              border: `1px solid ${greedy ? '#2a3542' : 'rgba(86,227,154,.4)'}`,
+              color: greedy ? COLORS.dim3 : COLORS.green,
+            }}>
+              {greedy ? 'greedy' : `temp ${sampling.temp}`}
+            </span>
+          </button>
+
+          {showSampling && (
+            <>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <ParamField label="temperature" value={sampling.temp} onChange={setParam('temp')} step="0.05" min="0" />
+                <ParamField label="top_k" value={sampling.top_k} onChange={setParam('top_k')} step="1" min="0" />
+                <ParamField label="top_p" value={sampling.top_p} onChange={setParam('top_p')} step="0.05" min="0" max="1" />
+                <ParamField label="min_p" value={sampling.min_p} onChange={setParam('min_p')} step="0.01" min="0" max="1" />
+                <ParamField label="repeat_penalty" value={sampling.repeat_penalty} onChange={setParam('repeat_penalty')} step="0.05" min="0" width={96} />
+                <ParamField label="seed" value={sampling.seed} onChange={setParam('seed')} step="1" placeholder="random" width={96} />
+              </div>
+              <div style={{ ...mono, fontSize: 10.5, color: COLORS.dim3, lineHeight: 1.5 }}>
+                {greedy
+                  ? 'temperature 0 — жадный выбор, вывод детерминирован; остальные параметры не применяются'
+                  : 'параметры фиксируются при создании сессии — воркер строит цепочку один раз при запуске'}
+              </div>
+              <button
+                onClick={() => setSampling(SAMPLING_DEFAULTS)}
+                style={{
+                  alignSelf: 'flex-start', padding: '4px 10px', borderRadius: 5, fontSize: 11,
+                  cursor: 'pointer', border: `1px solid ${COLORS.border}`, background: 'transparent',
+                  color: COLORS.dim, ...mono,
+                }}
+              >
+                сбросить
+              </button>
+            </>
+          )}
+        </div>
+
         <button
           onClick={create}
           disabled={!newModel || creating}

@@ -43,11 +43,38 @@ export async function fetchModels(orchestratorUrl) {
   return getJson(`${orchestratorUrl}/models`);
 }
 
-export async function createSession(orchestratorUrl, { model, speculativeDraftModelUrl, speculativeDraftK }) {
+// Sampling defaults mirror the runtime's own: temp 0 means greedy (the
+// deterministic argmax this cluster used before sampling was configurable),
+// and the rest are the disabled-values for their samplers.
+export const SAMPLING_DEFAULTS = {
+  temp: 0,
+  top_k: 1,
+  top_p: 1,
+  min_p: 0,
+  repeat_penalty: 1,
+  seed: '',
+};
+
+export async function createSession(
+  orchestratorUrl,
+  { model, speculativeDraftModelUrl, speculativeDraftK, sampling },
+) {
   const body = { model };
   if (speculativeDraftModelUrl) {
     body.speculative_draft_model_url = speculativeDraftModelUrl;
     body.speculative_draft_k = Number(speculativeDraftK) || 4;
+  }
+  if (sampling) {
+    const num = (v, fallback) => (v === '' || v === null || v === undefined ? fallback : Number(v));
+    body.temp = num(sampling.temp, 0);
+    body.top_k = num(sampling.top_k, 1);
+    body.top_p = num(sampling.top_p, 1);
+    body.min_p = num(sampling.min_p, 0);
+    body.repeat_penalty = num(sampling.repeat_penalty, 1);
+    // Empty seed means "random each run" -- the runtime's LLAMA_DEFAULT_SEED.
+    if (sampling.seed !== '' && sampling.seed !== null && sampling.seed !== undefined) {
+      body.seed = Number(sampling.seed);
+    }
   }
   return postJson(`${orchestratorUrl}/session/create`, body);
 }

@@ -194,14 +194,20 @@ export default function App() {
     });
   };
 
-  const handleCreateSession = async ({ model, speculativeDraftModelUrl, speculativeDraftK }) => {
-    const res = await createSession(cfg.orchestrator, { model, speculativeDraftModelUrl, speculativeDraftK });
+  const handleCreateSession = async ({ model, speculativeDraftModelUrl, speculativeDraftK, sampling }) => {
+    const res = await createSession(cfg.orchestrator, {
+      model,
+      speculativeDraftModelUrl,
+      speculativeDraftK,
+      sampling,
+    });
     const session = {
       session_id: res.session_id,
       model,
       pipeline: res.pipeline || [],
       speculative: !!speculativeDraftModelUrl,
       draftK: speculativeDraftK,
+      sampling,
     };
     lastSessionRef.current = session;
     setSessions((prev) => [...prev, session]);
