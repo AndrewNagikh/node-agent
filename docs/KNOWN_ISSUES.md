@@ -31,6 +31,15 @@ placement. The latency win was never actually measured -- the A/B in
 while the layer-churn cost was real and repeated. Moving layer placement
 is expensive; keeping it stable is free. `/network/stats` is untouched
 and still available for observability.
+**Follow-up (2026-07-24, `dd35417ff`):** removing RTT left score as the
+one remaining input that could still reorder roles on noise -- it comes
+from live measurements and drifts under unrelated load. Added relayout
+hysteresis: the previous role ordering is kept unless a node's score
+beats the incumbent's by >10% (2x the 5% delta `/register` uses to
+notice a change at all). Real topology changes still bypass it, and it
+can never put a GPU node behind a CPU-only one. Covered by
+`test-layout-hysteresis`, which asserts repeated jitter is a fixed
+point.
 
 ---
 
