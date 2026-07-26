@@ -68,6 +68,32 @@ export const SESSION_PHASES = [
   ['ready', 'Готово'],
 ];
 
+export async function searchHuggingFace(orchestratorUrl, query, limit = 24) {
+  const url = `${orchestratorUrl}/hf/search?limit=${limit}${query ? `&q=${encodeURIComponent(query)}` : ''}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function fetchHuggingFaceFiles(orchestratorUrl, repository) {
+  const res = await fetch(`${orchestratorUrl}/hf/files?repo=${encodeURIComponent(repository)}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+  return res.json();
+}
+
+// Registers a browsed model so the normal install pipeline can take over.
+// modelId is derived from the filename, which is what the rest of the system
+// keys everything on.
+export async function registerModel(orchestratorUrl, { modelId, repository, filename }) {
+  return postJson(`${orchestratorUrl}/models/register`, {
+    model_id: modelId,
+    source: 'huggingface',
+    repository,
+    filename,
+    revision: 'main',
+  });
+}
+
 export async function fetchSessionProgress(orchestratorUrl, progressId) {
   const res = await fetch(`${orchestratorUrl}/session/progress/${encodeURIComponent(progressId)}`);
   if (!res.ok) return null;

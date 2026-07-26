@@ -389,7 +389,7 @@ export default function App() {
               createProgress={createProgress}
             />
           )}
-          {view === 'models' && <Models models={models} />}
+          {view === 'models' && <Models models={models} orchestrator={cfg.orchestrator} />}
         </div>
       </div>
 
