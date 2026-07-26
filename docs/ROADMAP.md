@@ -64,7 +64,8 @@ NOT yet passed — carried into Task 21 verification. RFC-0014 write-up deferred
 
 | Plan | Scope | Doc |
 |------|-------|-----|
-| Task 21 | Adopt proven practices (Petals et al.): network-aware role placement, direct final→client token return, measured layer partitioning, relayout hysteresis | [TASK_21_PROVEN_PRACTICES_PLAN.md](TASK_21_PROVEN_PRACTICES_PLAN.md) |
+| **Task 24** | **Cluster stability under node churn — highest priority, everything else waits.** Nodes go on and off at random; the cluster keeps working, returns to its usual layout when they come back, and never re-downloads a layer it already had. Bar: several days of chaotic operation, zero manual intervention. | [TASK_24_CLUSTER_STABILITY.md](TASK_24_CLUSTER_STABILITY.md) |
+| Task 21 | Adopt proven practices (Petals et al.): network-aware role placement, direct final→client token return, measured layer partitioning, relayout hysteresis. **Note: 21.1 and 21.4 were both reverted** — each shipped on reasoning rather than measurement and broke a working cluster (see KNOWN_ISSUES.md). | [TASK_21_PROVEN_PRACTICES_PLAN.md](TASK_21_PROVEN_PRACTICES_PLAN.md) |
 | Task 20 | Tree/ensemble speculative decoding (go/no-go gated on Phase 0 offline measurement) | [TASK_20_TREE_SPECULATIVE_PLAN.md](TASK_20_TREE_SPECULATIVE_PLAN.md) |
 
 Prior-art grounding for both: [research/2026-07-22_distributed_inference_survey/](research/2026-07-22_distributed_inference_survey/SURVEY.md).
