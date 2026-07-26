@@ -79,10 +79,13 @@ export async function createSession(
   return postJson(`${orchestratorUrl}/session/create`, body);
 }
 
-export async function generate(orchestratorUrl, { sessionId, prompt, maxTokens }) {
+// `messages` is the full conversation so far ({role, content}); the runtime
+// renders it through the model's chat template. `prompt` remains accepted by
+// the API for non-chat callers but the dashboard always sends a conversation.
+export async function generate(orchestratorUrl, { sessionId, messages, maxTokens }) {
   return postJson(`${orchestratorUrl}/session/generate`, {
     session_id: sessionId,
-    prompt,
+    messages,
     max_tokens: maxTokens || 64,
     chat: true,
   });

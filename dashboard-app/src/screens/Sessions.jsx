@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { COLORS, mono, roleColor } from '../theme.js';
 import { SAMPLING_DEFAULTS } from '../api.js';
 
@@ -41,60 +41,146 @@ function SessionCard({ session, onDestroy, onGenerate, genState }) {
         ))}
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <textarea
-          value={genState.prompt}
-          onChange={(e) => genState.setPrompt(session.session_id, e.target.value)}
-          placeholder="Промпт…"
-          rows={3}
-          style={{ background: COLORS.inputBg, border: `1px solid ${COLORS.border}`, borderRadius: 7, padding: '10px 12px', color: COLORS.text, ...mono, fontSize: 12, resize: 'vertical', outline: 'none' }}
-        />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, color: COLORS.dim, ...mono }}>
-            max_tokens
-            <input
-              value={genState.maxTokens ?? 64}
-              onChange={(e) => genState.setMaxTokens(session.session_id, e.target.value)}
-              type="number"
-              min={1}
-              style={{ width: 80, background: COLORS.inputBg, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '5px 8px', color: COLORS.text, ...mono, fontSize: 12, outline: 'none' }}
-            />
-          </label>
-        </div>
-        <div>
-          <button
-            onClick={() => onGenerate(session.session_id)}
-            disabled={genState.running}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 7, padding: '7px 16px', borderRadius: 6, fontSize: 12.5,
-              fontWeight: 500, cursor: genState.running ? 'default' : 'pointer',
-              border: '1px solid rgba(86,227,154,.5)', background: 'rgba(86,227,154,.12)', color: COLORS.greenText,
-            }}
-          >
-            {genState.running ? 'Генерирую…' : 'Отправить'}
-          </button>
-        </div>
-        {genState.error && <div style={{ ...mono, fontSize: 11.5, color: COLORS.red }}>{genState.error}</div>}
-        {genState.result && (
-          <>
-            <div style={{ background: COLORS.logBg, border: `1px solid ${COLORS.borderDim}`, borderRadius: 7, padding: '12px 14px', fontSize: 12.5, lineHeight: 1.6, color: '#c6d2dc' }}>
-              {genState.result.text}
-            </div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {[
-                ['tok/s', genState.result.timing?.decode_tokens_per_sec?.toFixed(1)],
-                ['prefill', `${genState.result.timing?.prefill_ms?.toFixed(0)} ms`],
-                ['tokens', genState.result.timing?.generated_tokens],
-                ['speculative', String(genState.result.timing?.speculative ?? 'false')],
-              ].map(([k, v]) => (
-                <span key={k} style={{ ...mono, fontSize: 11, padding: '4px 10px', borderRadius: 5, border: '1px solid #253141', background: '#101720', color: '#8fa0b0' }}>
-                  {k} <span style={{ color: COLORS.green }}>{v ?? '—'}</span>
-                </span>
-              ))}
-            </div>
-          </>
+      <ChatPanel session={session} genState={genState} onGenerate={onGenerate} />
+    </div>
+  );
+}
+
+function ChatBubble({ role, content }) {
+  const isUser = role === 'user';
+  return (
+    <div style={{ display: 'flex', justifyContent: isUser ? 'flex-end' : 'flex-start' }}>
+      <div
+        style={{
+          maxWidth: '86%',
+          background: isUser ? 'rgba(86,227,154,.10)' : COLORS.logBg,
+          border: `1px solid ${isUser ? 'rgba(86,227,154,.28)' : COLORS.borderDim}`,
+          borderRadius: 9,
+          padding: '9px 12px',
+          fontSize: 12.5,
+          lineHeight: 1.6,
+          color: isUser ? '#d6e6dd' : '#c6d2dc',
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+        }}
+      >
+        {content}
+      </div>
+    </div>
+  );
+}
+
+function ChatPanel({ session, genState, onGenerate }) {
+  const scrollRef = useRef(null);
+  const messages = genState.messages || [];
+
+  // Follow the tail as turns arrive, the way a chat window is expected to.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages.length, genState.running]);
+
+  const send = () => onGenerate(session.session_id);
+  const onKeyDown = (e) => {
+    // Enter sends, Shift+Enter makes a newline.
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
+  };
+
+  const t = genState.lastTiming;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div
+        ref={scrollRef}
+        style={{
+          display: 'flex', flexDirection: 'column', gap: 8,
+          maxHeight: 340, overflowY: 'auto', paddingRight: 4, minHeight: messages.length ? 0 : 60,
+        }}
+      >
+        {messages.length === 0 && !genState.running && (
+          <div style={{ ...mono, fontSize: 11.5, color: COLORS.dim3, textAlign: 'center', padding: '18px 0' }}>
+            Диалог пуст — история отправляется целиком при каждом запросе
+          </div>
+        )}
+        {messages.map((m, i) => (
+          <ChatBubble key={i} role={m.role} content={m.content} />
+        ))}
+        {genState.running && (
+          <div style={{ ...mono, fontSize: 11.5, color: COLORS.dim, padding: '4px 2px' }}>
+            Генерирую…
+          </div>
         )}
       </div>
+
+      {genState.error && <div style={{ ...mono, fontSize: 11.5, color: COLORS.red }}>{genState.error}</div>}
+
+      <textarea
+        value={genState.prompt}
+        onChange={(e) => genState.setPrompt(session.session_id, e.target.value)}
+        onKeyDown={onKeyDown}
+        placeholder="Сообщение…  (Enter — отправить, Shift+Enter — перенос строки)"
+        rows={2}
+        style={{
+          background: COLORS.inputBg, border: `1px solid ${COLORS.border}`, borderRadius: 7,
+          padding: '10px 12px', color: COLORS.text, ...mono, fontSize: 12, resize: 'vertical', outline: 'none',
+        }}
+      />
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <button
+          onClick={send}
+          disabled={genState.running || !(genState.prompt || '').trim()}
+          style={{
+            padding: '7px 16px', borderRadius: 6, fontSize: 12.5, fontWeight: 500,
+            cursor: genState.running || !(genState.prompt || '').trim() ? 'default' : 'pointer',
+            border: '1px solid rgba(86,227,154,.5)',
+            background: genState.running ? 'rgba(86,227,154,.06)' : 'rgba(86,227,154,.12)',
+            color: COLORS.greenText, opacity: genState.running ? 0.6 : 1,
+          }}
+        >
+          {genState.running ? 'Генерирую…' : 'Отправить'}
+        </button>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, color: COLORS.dim, ...mono }}>
+          max_tokens
+          <input
+            value={genState.maxTokens ?? 64}
+            onChange={(e) => genState.setMaxTokens(session.session_id, e.target.value)}
+            type="number"
+            min={1}
+            style={{ width: 80, background: COLORS.inputBg, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '5px 8px', color: COLORS.text, ...mono, fontSize: 12, outline: 'none' }}
+          />
+        </label>
+        {messages.length > 0 && (
+          <button
+            onClick={() => genState.clearChat(session.session_id)}
+            style={{
+              marginLeft: 'auto', padding: '5px 11px', borderRadius: 6, fontSize: 11,
+              cursor: 'pointer', border: `1px solid ${COLORS.border}`, background: 'transparent',
+              color: COLORS.dim, ...mono,
+            }}
+          >
+            очистить
+          </button>
+        )}
+      </div>
+
+      {t && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {[
+            ['tok/s', t.decode_tokens_per_sec?.toFixed(1)],
+            ['prefill', t.prefill_ms != null ? `${t.prefill_ms.toFixed(0)} ms` : null],
+            ['tokens', t.generated_tokens],
+            ['speculative', String(t.speculative ?? 'false')],
+          ].map(([k, v]) => (
+            <span key={k} style={{ ...mono, fontSize: 11, padding: '4px 10px', borderRadius: 5, border: '1px solid #253141', background: '#101720', color: '#8fa0b0' }}>
+              {k} <span style={{ color: COLORS.green }}>{v ?? '—'}</span>
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -166,7 +252,10 @@ export default function Sessions({ sessions, models, onCreate, onDestroy, onGene
             session={s}
             onDestroy={onDestroy}
             onGenerate={onGenerate}
-            genState={genStates[s.session_id] || { prompt: '', running: false, setPrompt: () => {} }}
+            genState={genStates[s.session_id] || {
+              prompt: '', running: false, messages: [],
+              setPrompt: () => {}, setMaxTokens: () => {}, clearChat: () => {},
+            }}
           />
         ))}
       </div>

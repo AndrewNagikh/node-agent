@@ -213,15 +213,38 @@ export default function App() {
     setSessions((prev) => [...prev, session]);
   };
 
+  // Sends the whole conversation, not just the latest turn: the model is
+  // stateless across calls here (the KV cache is reset per generate), so the
+  // history has to be re-rendered through the chat template every time.
   const handleGenerate = async (sessionId) => {
-    const gs = genStates[sessionId] || { prompt: '' };
-    setGenStates((prev) => ({ ...prev, [sessionId]: { ...gs, running: true, error: null } }));
+    const gs = genStates[sessionId] || { prompt: '', messages: [] };
+    const text = (gs.prompt || '').trim();
+    if (!text || gs.running) return;
+
+    const history = [...(gs.messages || []), { role: 'user', content: text }];
+    setGenStates((prev) => ({
+      ...prev,
+      [sessionId]: { ...gs, messages: history, prompt: '', running: true, error: null },
+    }));
     try {
       const maxTokens = Number(gs.maxTokens) || 64;
-      const res = await generate(cfg.orchestrator, { sessionId, prompt: gs.prompt, maxTokens });
-      setGenStates((prev) => ({ ...prev, [sessionId]: { ...prev[sessionId], running: false, result: res } }));
+      const res = await generate(cfg.orchestrator, { sessionId, messages: history, maxTokens });
+      setGenStates((prev) => ({
+        ...prev,
+        [sessionId]: {
+          ...prev[sessionId],
+          running: false,
+          messages: [...history, { role: 'assistant', content: res.text || '' }],
+          lastTiming: res.timing || null,
+        },
+      }));
     } catch (e) {
-      setGenStates((prev) => ({ ...prev, [sessionId]: { ...prev[sessionId], running: false, error: e.message } }));
+      // Keep the user's turn visible but drop it from the history that gets
+      // resent, so a retry doesn't stack duplicate turns.
+      setGenStates((prev) => ({
+        ...prev,
+        [sessionId]: { ...prev[sessionId], running: false, messages: gs.messages || [], prompt: text, error: e.message },
+      }));
     }
   };
 
@@ -233,13 +256,25 @@ export default function App() {
     setGenStates((prev) => ({ ...prev, [sessionId]: { ...(prev[sessionId] || {}), maxTokens: value } }));
   };
 
+  const clearChat = (sessionId) => {
+    setGenStates((prev) => ({
+      ...prev,
+      [sessionId]: { ...(prev[sessionId] || {}), messages: [], lastTiming: null, error: null },
+    }));
+  };
+
   // Plain computed value, not useMemo: this function already sits after
   // the loading/!cfg early returns below, so a hook here would change the
   // number of hooks called between the "still loading" and "ready" renders
   // -- exactly the Rules-of-Hooks violation that blanked the screen.
   const genStatesForScreen = {};
   for (const s of sessions) {
-    genStatesForScreen[s.session_id] = { ...(genStates[s.session_id] || { prompt: '', maxTokens: 64 }), setPrompt, setMaxTokens };
+    genStatesForScreen[s.session_id] = {
+      ...(genStates[s.session_id] || { prompt: '', maxTokens: 64, messages: [] }),
+      setPrompt,
+      setMaxTokens,
+      clearChat,
+    };
   }
 
   const selectedNode = nodes.find((n) => n.node_id === selectedNodeId);
