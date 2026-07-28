@@ -1,0 +1,14 @@
+# The build only needs llama.cpp/ and docker/. Everything below is either huge,
+# machine-specific, or would bust the layer cache on every unrelated edit.
+.git
+**/node_modules
+dashboard-app/dist
+docker/data
+data
+*.gguf
+llama.cpp/build
+llama.cpp/models
+docs
+.env
+nodes.conf
+.claude

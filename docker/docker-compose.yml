@@ -1,0 +1,70 @@
+# One machine, one role. Profiles pick which:
+#
+#   docker compose --profile orchestrator up -d --build    # coordinating machine
+#   docker compose --profile node up -d --build            # every other machine
+#
+# Copy .env.example to .env first; on a node the only line that matters is
+# ORCHESTRATOR.
+#
+# `network_mode: host` is deliberate, not laziness. Nodes advertise the address
+# they can be reached at, and worker transports use a port derived at runtime
+# from the orchestrator's pid (roughly 9110-9700), so there is no fixed set of
+# ports to publish. Host networking sidesteps both.
+#
+# It is Linux-only. On Docker Desktop for macOS/Windows, see docker/README.md
+# for the published-port variant -- and note the models themselves run on CPU
+# in a container either way (no Metal, no CUDA without the toolkit), so a
+# containerised node is usually the slower option on those platforms.
+
+name: node-agent
+
+services:
+  orchestrator:
+    profiles: ["orchestrator"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: node-agent:local
+    container_name: dist-orchestrator
+    command: ["orchestrator"]
+    network_mode: host
+    environment:
+      PORT: "${ORCHESTRATOR_PORT:-9000}"
+      MODELS_DIR: /data/models
+      HF_TOKEN: "${HF_TOKEN:-}"
+    volumes:
+      # Bind mount, not a named volume: these are the layer shards, and the
+      # whole point of the design is never re-downloading them. They should
+      # outlive any `docker compose down`.
+      - "${MODELS_DIR:-./data/models}:/data/models"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:${ORCHESTRATOR_PORT:-9000}/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+
+  node:
+    profiles: ["node"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: node-agent:local
+    container_name: dist-node
+    command: ["node"]
+    network_mode: host
+    environment:
+      # The one setting that matters. Everything else is discovered.
+      ORCHESTRATOR: "${ORCHESTRATOR:?set ORCHESTRATOR=http://<host>:9000 in .env}"
+      # Defaults to the container hostname, which under host networking is the
+      # machine's own hostname -- unique per machine without being configured.
+      NODE_ID: "${NODE_ID:-}"
+      PORT: "${NODE_PORT:-9001}"
+      # Only needed when detection picks the wrong interface.
+      ADVERTISE_HOST: "${ADVERTISE_HOST:-}"
+      MODELS_DIR: /data/models
+      HF_TOKEN: "${HF_TOKEN:-}"
+    volumes:
+      - "${MODELS_DIR:-./data/models}:/data/models"
+    restart: unless-stopped

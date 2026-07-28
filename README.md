@@ -151,6 +151,33 @@ Then, one command per machine:
 Override with `MODEL=/path/to/model.gguf`, `ADVERTISE_HOST=...`, or
 `REBENCHMARK=1` to re-score the node.
 
+### Or in Docker
+
+One container is one machine's role, chosen by compose profile:
+
+```bash
+cp docker/.env.example docker/.env
+```
+
+```bash
+docker compose -f docker/docker-compose.yml --profile orchestrator up -d --build
+```
+
+```bash
+docker compose -f docker/docker-compose.yml --profile node up -d --build
+```
+
+Set `ORCHESTRATOR` in `docker/.env` on the nodes; the node id defaults to the
+machine's hostname, and its address is detected the same way as natively.
+
+Two things worth knowing before you choose this over the scripts, both covered
+in [docker/README.md](docker/README.md): a containerised node runs **CPU-only**
+(no Metal, no CUDA without the toolkit), so on a Mac the native launcher is
+several times faster; and the compose file uses host networking, which is
+Linux-only, because worker transports bind a port derived at runtime from the
+orchestrator's pid and there is no fixed set to publish. Docker suits a
+headless Linux box, not a laptop you want speed from.
+
 ## Using it
 
 ### Desktop dashboard
