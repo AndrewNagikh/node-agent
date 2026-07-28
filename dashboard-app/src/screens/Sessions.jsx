@@ -16,6 +16,16 @@ function SessionCard({ session, onDestroy, onGenerate, genState }) {
             speculative k={session.draftK}
           </span>
         )}
+        {session.context?.n_ctx > 0 && (
+          <span
+            style={{ ...mono, fontSize: 10.5, padding: '2px 8px', borderRadius: 4, border: '1px solid #2a3542', color: COLORS.dim }}
+            title={session.context.model_native_n_ctx
+              ? `модель поддерживает до ${session.context.model_native_n_ctx}`
+              : undefined}
+          >
+            ctx {session.context.n_ctx}
+          </span>
+        )}
         {session.sampling && Number(session.sampling.temp) > 0 && (
           <span style={{ ...mono, fontSize: 10.5, padding: '2px 8px', borderRadius: 4, border: '1px solid #2a3542', color: COLORS.dim }}>
             temp {session.sampling.temp}
@@ -91,6 +101,13 @@ function ChatPanel({ session, genState, onGenerate }) {
 
   const t = genState.lastTiming;
 
+  // The context is shared by the prompt and the reply, so the whole
+  // conversation competes with max_tokens for it. Warn rather than clamp:
+  // a long chat can exceed it without any single setting being wrong, and
+  // silently rewriting the user's number would hide that.
+  const nCtx = session.context?.n_ctx || 0;
+  const overTokenBudget = nCtx > 0 && Number(genState.maxTokens || 64) > nCtx;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div
@@ -116,6 +133,13 @@ function ChatPanel({ session, genState, onGenerate }) {
       </div>
 
       {genState.error && <div style={{ ...mono, fontSize: 11.5, color: COLORS.red }}>{genState.error}</div>}
+
+      {overTokenBudget && (
+        <div style={{ ...mono, fontSize: 10.5, color: COLORS.amber, lineHeight: 1.5 }}>
+          max_tokens больше контекста сессии ({nCtx}). Генерация оборвётся, когда
+          промпт вместе с ответом его исчерпает.
+        </div>
+      )}
 
       <textarea
         value={genState.prompt}
@@ -143,15 +167,25 @@ function ChatPanel({ session, genState, onGenerate }) {
         >
           {genState.running ? 'Генерирую…' : 'Отправить'}
         </button>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, color: COLORS.dim, ...mono }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, color: overTokenBudget ? COLORS.amber : COLORS.dim, ...mono }}>
           max_tokens
           <input
             value={genState.maxTokens ?? 64}
             onChange={(e) => genState.setMaxTokens(session.session_id, e.target.value)}
             type="number"
             min={1}
-            style={{ width: 80, background: COLORS.inputBg, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '5px 8px', color: COLORS.text, ...mono, fontSize: 12, outline: 'none' }}
+            max={nCtx || undefined}
+            style={{
+              width: 80, background: COLORS.inputBg, borderRadius: 6, padding: '5px 8px',
+              border: `1px solid ${overTokenBudget ? COLORS.amber : COLORS.border}`,
+              color: COLORS.text, ...mono, fontSize: 12, outline: 'none',
+            }}
           />
+          {nCtx > 0 && (
+            <span style={{ fontSize: 10.5, color: COLORS.dim3 }}>
+              из {nCtx} ctx
+            </span>
+          )}
         </label>
         {messages.length > 0 && (
           <button

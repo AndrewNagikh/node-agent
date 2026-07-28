@@ -265,6 +265,10 @@ export default function App() {
       speculative: !!speculativeDraftModelUrl,
       draftK: speculativeDraftK,
       sampling,
+      // What the pipeline can actually hold. Without it the composer would
+      // happily accept a max_tokens the session cannot reach, and the failure
+      // arrives mid-generation as a KV exhaustion error rather than up front.
+      context: res.context || null,
     };
     lastSessionRef.current = session;
     setSessions((prev) => [...prev, session]);
