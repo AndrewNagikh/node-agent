@@ -8,7 +8,45 @@ how it was found, root cause (if known), status.
 
 ## OPEN
 
-(none currently -- see FIXED and DISMISSED below.)
+### The orchestrator acts on cluster state it has not verified
+**This is the root cause behind most of the incidents below**, recorded
+separately because the individual fixes treated symptoms.
+
+`trigger_cluster_optimization_async` runs on node registration. After a
+restart the first node back triggers it while the others are still
+booting, so their layers look absent, every model looks broken, and the
+optimizer "repairs" it by moving layers onto whatever is up -- deleting
+the copies elsewhere. Coverage polled while a node is merely busy loading
+tensors produces the same false picture.
+
+Mitigations landed 2026-07-24 (`74371b6`, `c7d2296`): re-poll before
+judging, skip models whose layout names an offline node, cap futile
+relayouts, refuse one-stage pipelines, self-heal a structurally broken
+layout at session create. Those stopped the data loss. They do not make
+the design correct -- the layout is still derived from a live view while
+installed blobs are expected to follow it.
+
+**Full fix is Task 24** (`TASK_24_CLUSTER_STABILITY.md`): invert the
+authority so installed layers are the durable state. The decision itself
+is now an explicit, unit-tested pure function (`layout_policy.h`,
+`b8ad88d`) but is **not yet wired into the orchestrator** -- that changes
+a destructive path and wants the cluster available to verify.
+
+### Coverage is reported stale and read as breakage
+Coverage is computed at whatever moment it happens to run and then
+served from the registry without any indication of when it was taken. On
+2026-07-27 eleven of fourteen models showed DEGRADED with partial layer
+counts immediately after a restart; a forced refresh returned all but
+one to READY. Nothing had been lost.
+
+Same day, the same symptom had a different cause: node-a was simply not
+running, while `/nodes` still listed it online from a stale registration.
+Eight models "recovered" the moment it was started, with no repair at
+all.
+
+Both times the honest answer was "the report is old", and both times it
+was initially read as damage. A freshness timestamp on the coverage
+record, and a UI that shows it, would have made the difference obvious.
 
 ---
 
@@ -78,6 +116,45 @@ verified/rejected correctly the whole time. Full writeup:
 ---
 
 ## FIXED
+
+### KV cache was allocated for the whole model on every node
+**Found:** 2026-07-27, while investigating whether a distributed KV cache
+was worth building. It turned out one already should have existed.
+**Symptom:** context could not be raised; memory accounting never matched
+what nodes actually used.
+**Root cause:** `llama_kv_cache` sizes itself from `hparams.n_layer_all`,
+and the only per-layer gate is a `filter` callback that was null on the
+normal path. `cparams.layer_start/layer_end` -- the range that decides
+which layers a node *executes* -- never reached it. So a node holding 28
+of 80 layers reserved cache for all 80, and every node in the cluster
+held a full copy. Aggregate memory was never the limit; replication was.
+**Fix (`293d5e661`):** compose a range filter with the existing
+architecture filters, placed before the SWA branch so it covers all three
+construction paths. The first attempt patched only the plain path and a
+Gemma-3 model went straight past it through `llama_kv_cache_iswa` --
+worth remembering, that path is easy to miss.
+**Measured:** Gemma-3-1B, 26 layers, n_ctx 4096 -- 104 MiB full range vs
+32 MiB for layers [0,8). Live on the cluster: 5/5/18 layers cached
+instead of 28 on each node, 448 MiB total against ~1.3 GB before.
+Also fixes an accounting mismatch: `layout_planner` already charged KV
+per assigned layer, so its fit check had been optimistic.
+
+### Generation capped at ~500 tokens regardless of the model
+**Found:** 2026-07-27, reported as `decode token ready failed at step 493`
+-- an error naming neither the context nor the real limit, and pipeline
+recovery then hit the same wall and reported it twice.
+**Root cause:** every worker built its context with a hardcoded
+`cparams.n_ctx = 512`, while the planner had been sizing KV for the
+session's 4096. Memory was reserved for one context and the workers ran
+another.
+**Fix (`46e1bda`):** the session's `n_ctx` now flows create -> configure
+-> worker `--ctx-size`, across all three pipeline stages and the per-node
+embedding/output services (stages must agree; the one with the smaller
+cache would be the one to fail mid-sequence). Clamped to the model's own
+trained context, and the effective/native/requested values are returned
+from `/session/create` so a caller can size `max_tokens` instead of
+discovering the limit by hitting it.
+**Verified live:** 700 tokens generated where 493 used to fail.
 
 ### Distributed generate loop never checks for EOG (end-of-turn) tokens
 **Found:** 2026-07-24, dashboard testing after wiring up chat-template mode.
