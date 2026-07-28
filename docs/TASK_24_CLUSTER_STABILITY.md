@@ -1,7 +1,36 @@
 # Task 24 — Cluster stability under node churn
 
-**Status:** specified, not started. Written 2026-07-27.
+**Status:** decision logic implemented and wired; **live churn verification
+pending** (needs the cluster). Written 2026-07-27.
 **Priority:** highest remaining work item. Everything else waits.
+
+> **Progress 2026-07-28.** The decision is now one pure, unit-tested
+> function — `decide_layout_action()` in
+> `orchestrator/layout_policy/layout_policy.{h,cpp}`, 12 cases in
+> `test-layout-policy` — and `trigger_cluster_optimization_async()` calls
+> it instead of the stack of ad-hoc guards that had accumulated one
+> incident at a time. Each of those guards was right about the case that
+> produced it and silent about the rest, which is why the same data loss
+> kept returning in a new shape.
+>
+> The substantive change: a **`repair` verdict no longer relayouts**.
+> Missing or corrupted layers are a data problem, and the fix is to move
+> blobs toward the stored layout rather than to pick a new one. A relayout
+> now happens only on `recompute` — no stored layout, or a stored one that
+> cannot produce a runnable pipeline.
+>
+> **Deliberate trade-off this introduces:** a node that is gone *permanently*
+> now leaves its models `unavailable` indefinitely, with no automatic path
+> back. That is the intended reading of principle 3 (deletion requires
+> positive evidence) — a background sweep cannot distinguish a closed laptop
+> from a decommissioned machine, and guessing wrong is what destroyed data.
+> Reassigning a departed node's share is therefore an explicit operator
+> action. If several days of churn testing show this is too strict in
+> practice, the fix is an explicit "this node is gone" control, not a
+> timeout that guesses.
+>
+> Still to verify on the cluster: the acceptance test below, starting from
+> step 0.
 
 ## The requirement, in one sentence
 
