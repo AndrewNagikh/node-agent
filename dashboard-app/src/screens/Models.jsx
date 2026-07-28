@@ -18,6 +18,9 @@ const COVERAGE_COLOR = {
   READY: COLORS.green,
   PARTIAL: COLORS.amber,
   DEGRADED: COLORS.redText,
+  // Not red: nothing is damaged and nothing needs downloading. A node holding
+  // some layers is switched off, and they come back with the machine.
+  UNAVAILABLE: COLORS.dim,
 };
 
 function gb(bytes) {
@@ -63,7 +66,13 @@ function InstalledModelRow({ model, orchestrator }) {
   const cov = model.coverage || {};
   const covState = cov.state || null;
   const missing = cov.missing_layers ?? 0;
-  const needsRepair = covState && covState !== 'READY';
+  const unavailable = cov.unavailable_layers ?? 0;
+  // UNAVAILABLE is deliberately not repairable: the layers are intact on a
+  // node that is off, and the only useful action is turning it back on.
+  // Offering "восстановить" here is what led to repairing models that were
+  // never broken -- and a repair plan against an absent node deletes and
+  // re-downloads layers that were fine.
+  const needsRepair = covState && covState !== 'READY' && covState !== 'UNAVAILABLE';
   const statusColor = STATUS_COLOR[model.status] || COLORS.dim;
   const covColor = COVERAGE_COLOR[covState] || COLORS.dim3;
 
@@ -161,6 +170,12 @@ function InstalledModelRow({ model, orchestrator }) {
       {needsRepair && phase === 'idle' && missing > 0 && (
         <div style={{ ...mono, fontSize: 10.5, color: COLORS.dim3 }}>
           не хватает слоёв: {missing}
+        </div>
+      )}
+
+      {covState === 'UNAVAILABLE' && phase === 'idle' && (
+        <div style={{ ...mono, fontSize: 10.5, color: COLORS.dim3 }}>
+          слоёв на выключенных нодах: {unavailable} — данные целы, вернутся вместе с нодой
         </div>
       )}
 
