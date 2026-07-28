@@ -117,6 +117,16 @@ export async function searchHuggingFace(orchestratorUrl, query, limit = 24) {
   return res.json();
 }
 
+// Heuristic shortlist of possible speculative draft models. HF has no
+// declared draft-pair field, so this is candidates to measure, never a
+// promise -- acceptance is strongly pair-dependent (x1.64 on one pair, 19%
+// and no speedup on another).
+export async function fetchDraftCandidates(orchestratorUrl, repository) {
+  const res = await fetch(`${orchestratorUrl}/hf/draft-candidates?repo=${encodeURIComponent(repository)}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+  return res.json();
+}
+
 export async function fetchHuggingFaceFiles(orchestratorUrl, repository) {
   const res = await fetch(`${orchestratorUrl}/hf/files?repo=${encodeURIComponent(repository)}`);
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);

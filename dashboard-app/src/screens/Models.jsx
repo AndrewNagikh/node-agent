@@ -3,6 +3,7 @@ import { COLORS, mono } from '../theme.js';
 import {
   searchHuggingFace, fetchHuggingFaceFiles, registerModel,
   fetchInstallPlan, startInstall, fetchJob, refreshCoverage,
+  fetchDraftCandidates,
 } from '../api.js';
 
 const STATUS_COLOR = {
@@ -249,6 +250,69 @@ function FileRow({ file, repository, onRegister }) {
   );
 }
 
+// Possible draft models for speculative decoding. Presented as a shortlist
+// to try, not a recommendation: HF has no declared pairing, so this is a name
+// search, and acceptance only becomes real once measured.
+function DraftCandidates({ repository, orchestrator }) {
+  const [state, setState] = useState('idle'); // idle | loading | done | error
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+
+  const look = async () => {
+    setState('loading');
+    setError(null);
+    try {
+      setData(await fetchDraftCandidates(orchestrator, repository));
+      setState('done');
+    } catch (e) {
+      setError(e.message);
+      setState('error');
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${COLORS.borderDim}` }}>
+      {state === 'idle' && (
+        <button
+          onClick={look}
+          style={{
+            padding: '4px 11px', borderRadius: 5, fontSize: 11, ...mono, cursor: 'pointer',
+            border: `1px solid ${COLORS.border}`, background: 'transparent', color: COLORS.dim,
+          }}
+        >
+          поискать драфт-модель
+        </button>
+      )}
+      {state === 'loading' && (
+        <div style={{ ...mono, fontSize: 11, color: COLORS.dim }}>Ищу на Hugging Face…</div>
+      )}
+      {error && <div style={{ ...mono, fontSize: 11, color: COLORS.red }}>{error}</div>}
+      {state === 'done' && data && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          {(data.candidates || []).length === 0 ? (
+            <div style={{ ...mono, fontSize: 11, color: COLORS.dim3 }}>
+              Кандидатов не нашлось — для многих моделей драфтов просто нет.
+            </div>
+          ) : (
+            <>
+              {data.candidates.map((c) => (
+                <div key={c.repository} style={{ ...mono, fontSize: 11, color: COLORS.text, wordBreak: 'break-all' }}>
+                  · {c.repository}
+                </div>
+              ))}
+              <div style={{ ...mono, fontSize: 10.5, color: COLORS.amber, lineHeight: 1.5 }}>
+                Совпадение по названию, не подтверждённая пара — у Hugging Face нет
+                такого поля. Ускорение обязательно измерять: одна и та же 1B-драфт
+                дала ×1.64 на 3B и 19% попаданий без выигрыша на 70B.
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RepoCard({ repo, orchestrator, onRegister }) {
   const [open, setOpen] = useState(false);
   const [files, setFiles] = useState(null);
@@ -300,6 +364,9 @@ function RepoCard({ repo, orchestrator, onRegister }) {
           {files && files.map((f) => (
             <FileRow key={f.filename} file={f} repository={repo.repository} onRegister={onRegister} />
           ))}
+          {files && files.length > 0 && (
+            <DraftCandidates repository={repo.repository} orchestrator={orchestrator} />
+          )}
         </div>
       )}
     </div>
