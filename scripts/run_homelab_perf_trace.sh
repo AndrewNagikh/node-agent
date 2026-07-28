@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ORCHESTRATOR="${ORCHESTRATOR:-http://192.168.50.154:9000}"
+ORCHESTRATOR="${ORCHESTRATOR:-http://127.0.0.1:9000}"
 PROFILE="${BENCHMARK_PROFILE:-runtime_profile}"
 MODEL="${BENCHMARK_MODEL:-tinyllama}"
 RUN_ID="$(date +%Y%m%d_%H%M%S)"

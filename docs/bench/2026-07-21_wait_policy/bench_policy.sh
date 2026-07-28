@@ -9,8 +9,8 @@ set -euo pipefail
 POLICY="${1:?policy label, e.g. fixed:8, p80, p95}"
 CSV="${2:?path to results csv}"
 
-ORCH="http://192.168.50.154:9000"
-ENTRY_HOST="192.168.50.254"
+ORCH="${ORCHESTRATOR:-http://127.0.0.1:9000}"
+ENTRY_HOST="${ENTRY_HOST:?set ENTRY_HOST to the entry node}"
 ENTRY_DEBUG="http://${ENTRY_HOST}:9002/debug/log?worker=entry&lines=8000"
 ENTRY_NETSTATS="http://${ENTRY_HOST}:9002/network/stats"
 PROMPTS_FILE="$(dirname "$0")/bench_prompts.txt"

@@ -4,7 +4,7 @@
 # HTTP API -- no manual node/process intervention of any kind.
 set -uo pipefail
 
-ORCH="http://192.168.50.154:9000"
+ORCH="${ORCHESTRATOR:-http://127.0.0.1:9000}"
 OUT_JSONL="/private/tmp/claude-502/-Users-user-Documents-node-agent/c352eef4-56ac-4918-a4a6-2239eeeba155/scratchpad/soak/results_v2.jsonl"
 LOG="/private/tmp/claude-502/-Users-user-Documents-node-agent/c352eef4-56ac-4918-a4a6-2239eeeba155/scratchpad/soak/soak_v2.log"
 

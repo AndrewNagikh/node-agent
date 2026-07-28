@@ -6,7 +6,7 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1 -Cuda -Firewall
 
 param(
-    [string]$Orchestrator = "http://192.168.50.154:9000",
+    [string]$Orchestrator = "http://127.0.0.1:9000",
     [switch]$Cuda,
     [switch]$Firewall,
     [switch]$SkipDeps,

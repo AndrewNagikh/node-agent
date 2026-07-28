@@ -21,7 +21,7 @@ and absence is not loss (Task 24, principle 2).
 ## Use
 
 ```bash
-export ORCHESTRATOR=http://192.168.50.154:9000   # optional, this is the default
+export ORCHESTRATOR=http://192.0.2.10:9000   # optional, this is the default
 
 python3 churn_check.py snapshot                  # cluster healthy, before touching anything
 

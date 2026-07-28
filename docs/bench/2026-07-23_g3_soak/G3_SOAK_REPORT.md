@@ -268,5 +268,5 @@ Each script is identical to `soak_test.sh` except for its output file names
 (`results_vN.jsonl` / `soak_vN.log`), so prior runs aren't overwritten. Edit
 `MODELS`, `PROMPT`, `MAX_TOKENS`, `DURATION_SEC`, `MIN_CYCLES` at the top of
 any of them to adjust. Requires the orchestrator reachable at
-`192.168.50.154:9000` (hardcoded — parameterize if run against a different
+`192.0.2.10:9000` (hardcoded — parameterize if run against a different
 cluster) with the target models already `coverage: READY`.

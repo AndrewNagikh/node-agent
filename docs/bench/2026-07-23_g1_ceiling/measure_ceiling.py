@@ -23,7 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "benchmarks"))
 
-ORCHESTRATOR = os.environ.get("ORCHESTRATOR", "http://192.168.50.154:9000")
+ORCHESTRATOR = os.environ.get("ORCHESTRATOR", "http://127.0.0.1:9000")
 PROMPT = "The history of the Roman Empire began"
 MAX_TOKENS = 64
 

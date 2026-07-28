@@ -14,7 +14,7 @@
 
 param(
     [string]$RepoPath = "",
-    [string]$Orchestrator = "http://192.168.50.154:9000",
+    [string]$Orchestrator = "http://127.0.0.1:9000",
     [switch]$SkipWslConfig,
     [switch]$SkipBuild
 )

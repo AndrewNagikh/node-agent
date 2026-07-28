@@ -9,10 +9,10 @@
 
 | Роль | Хост | IP | Порт HTTP |
 |------|------|-----|-----------|
-| Orchestrator | homelab | `192.168.50.154` | `9000` |
-| node-a | Mac M3 Pro | `192.168.50.42` | `9001` |
-| node-b | Mac M1 Pro | `192.168.50.254` | `9002` |
-| **node-c** | **Windows PC (RTX 4070 Ti)** | **`192.168.50.51`** | **`9003`** |
+| Orchestrator | homelab | `192.0.2.10` | `9000` |
+| node-a | Mac M3 Pro | `192.0.2.11` | `9001` |
+| node-b | Mac M1 Pro | `192.0.2.12` | `9002` |
+| **node-c** | **Windows PC (RTX 4070 Ti)** | **`192.0.2.13`** | **`9003`** |
 
 Pipeline TCP между воркерами: динамические порты **`9100–9700`** (назначает orchestrator при configure).
 
@@ -108,9 +108,9 @@ Inbound TCP:
 Без `nodes.conf` — вручную:
 
 ```powershell
-$env:ORCHESTRATOR = "http://192.168.50.154:9000"
+$env:ORCHESTRATOR = "http://192.0.2.10:9000"
 # при необходимости явно:
-# $env:ADVERTISE_HOST = "192.168.50.51"
+# $env:ADVERTISE_HOST = "192.0.2.13"
 
 .\run-agent.ps1 -NodeId node-c
 ```
@@ -118,7 +118,7 @@ $env:ORCHESTRATOR = "http://192.168.50.154:9000"
 Проверка с другой машины в LAN:
 
 ```bash
-curl http://192.168.50.51:9003/health
+curl http://192.0.2.13:9003/health
 ```
 
 ### 6. Sync + generate (с homelab или Mac)
@@ -126,14 +126,14 @@ curl http://192.168.50.51:9003/health
 После того как orchestrator видит все 3 ноды:
 
 ```bash
-ORCHESTRATOR=http://192.168.50.154:9000 \
+ORCHESTRATOR=http://192.0.2.10:9000 \
   python3 llama.cpp/tools/distributed/docker/run_e2e_generate.py --model tinyllama-1.1b
 ```
 
 Для Qwen3-8B (когда TinyLlama проходит):
 
 ```bash
-ORCHESTRATOR=http://192.168.50.154:9000 \
+ORCHESTRATOR=http://192.0.2.10:9000 \
   python3 llama.cpp/tools/distributed/docker/run_e2e_generate.py --model qwen3-8b
 ```
 
@@ -195,10 +195,10 @@ ORCHESTRATOR=http://192.168.50.154:9000 \
 ### Health всех нод
 
 ```bash
-curl http://192.168.50.154:9000/health
-curl http://192.168.50.42:9001/health
-curl http://192.168.50.254:9002/health
-curl http://192.168.50.51:9003/health
+curl http://192.0.2.10:9000/health
+curl http://192.0.2.11:9001/health
+curl http://192.0.2.12:9002/health
+curl http://192.0.2.13:9003/health
 ```
 
 ### Во время активной сессии generate
@@ -207,7 +207,7 @@ curl http://192.168.50.51:9003/health
 С Mac проверить доступность порта node-c:
 
 ```bash
-nc -zv 192.168.50.51 <pipeline_port>
+nc -zv 192.0.2.13 <pipeline_port>
 ```
 
 `connection refused` на final peer port может быть нормой, если соединение уже принято воркером.
@@ -235,11 +235,11 @@ nc -zv 192.168.50.51 <pipeline_port>
 Задача:
 1. git pull + submodule update
 2. Собрать с CUDA: scripts\setup-windows.ps1 -Cuda -Firewall (или build.ps1 -Cuda)
-3. Запустить node-c: run-agent.ps1, ORCHESTRATOR=http://192.168.50.154:9000
+3. Запустить node-c: run-agent.ps1, ORCHESTRATOR=http://192.0.2.10:9000
 4. Починить все ошибки сборки/запуска
-5. Добиться curl http://192.168.50.51:9003/health и E2E generate (tinyllama-1.1b)
+5. Добиться curl http://192.0.2.13:9003/health и E2E generate (tinyllama-1.1b)
 
-Кластер: orchestrator 192.168.50.154:9000, node-a .42:9001, node-b .254:9002, node-c .51:9003.
+Кластер: orchestrator 192.0.2.10:9000, node-a .42:9001, node-b .254:9002, node-c .51:9003.
 Native Windows (без WSL). Код Windows port уже в llama.cpp (dist_process, split_tcp_init).
 
 Читай docs/WINDOWS_NODE_C_HANDOFF.md и ключевые файлы из таблицы там.
@@ -249,7 +249,7 @@ Native Windows (без WSL). Код Windows port уже в llama.cpp (dist_proce
 
 ## Критерий готовности
 
-1. `curl http://192.168.50.51:9003/health` → OK с любой ноды LAN  
+1. `curl http://192.0.2.13:9003/health` → OK с любой ноды LAN  
 2. Orchestrator: все 3 ноды registered, sync → READY  
 3. `run_e2e_generate.py --model tinyllama-1.1b` → **PASS** (текст сгенерирован)  
 4. Опционально: `qwen3-8b` generate без `prefill failed`

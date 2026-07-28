@@ -146,15 +146,15 @@ not** weaken the current conservative default without that experiment.
 
 ```bash
 # Register + discover + manifest (cheap, no download):
-curl -X POST http://192.168.50.154:9000/models/register -d '{"model_id":"llama-3.3-70b-q3ks","source":"huggingface","repository":"bartowski/Llama-3.3-70B-Instruct-GGUF","filename":"Llama-3.3-70B-Instruct-Q3_K_S.gguf","revision":"main"}'
-curl -X POST http://192.168.50.154:9000/models/llama-3.3-70b-q3ks/discover -d '{}'
-curl -X POST http://192.168.50.154:9000/models/llama-3.3-70b-q3ks/manifest -d '{}'
-curl -X POST http://192.168.50.154:9000/models/llama-3.3-70b-q3ks/layout -d '{}'   # confirms fits_cluster
+curl -X POST http://192.0.2.10:9000/models/register -d '{"model_id":"llama-3.3-70b-q3ks","source":"huggingface","repository":"bartowski/Llama-3.3-70B-Instruct-GGUF","filename":"Llama-3.3-70B-Instruct-Q3_K_S.gguf","revision":"main"}'
+curl -X POST http://192.0.2.10:9000/models/llama-3.3-70b-q3ks/discover -d '{}'
+curl -X POST http://192.0.2.10:9000/models/llama-3.3-70b-q3ks/manifest -d '{}'
+curl -X POST http://192.0.2.10:9000/models/llama-3.3-70b-q3ks/layout -d '{}'   # confirms fits_cluster
 
 # Install (~42 min, ~30.9GB):
-curl -X POST http://192.168.50.154:9000/models/llama-3.3-70b-q3ks/install-plan -o /tmp/plan.json
-curl -X POST http://192.168.50.154:9000/models/llama-3.3-70b-q3ks/install/execute   # poll /jobs/{id}
-curl -X POST http://192.168.50.154:9000/models/llama-3.3-70b-q3ks/coverage/refresh
+curl -X POST http://192.0.2.10:9000/models/llama-3.3-70b-q3ks/install-plan -o /tmp/plan.json
+curl -X POST http://192.0.2.10:9000/models/llama-3.3-70b-q3ks/install/execute   # poll /jobs/{id}
+curl -X POST http://192.0.2.10:9000/models/llama-3.3-70b-q3ks/coverage/refresh
 
 # Ceiling measurement (same script as G1):
 python3 docs/bench/2026-07-23_g1_ceiling/measure_ceiling.py llama-3.3-70b-q3ks

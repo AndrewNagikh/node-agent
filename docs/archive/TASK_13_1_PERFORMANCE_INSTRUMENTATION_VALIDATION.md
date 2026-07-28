@@ -58,7 +58,7 @@ Middle/final workers emit pipeline events with `phase=session_create`, not `phas
 After homelab run with trace:
 
 ```bash
-ORCHESTRATOR=http://192.168.50.154:9000 \
+ORCHESTRATOR=http://192.0.2.10:9000 \
 BENCHMARK_DOCKER=0 \
 DIST_PERF_TRACE=1 \
 python3 benchmarks/benchmark_runner.py \

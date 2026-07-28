@@ -29,7 +29,7 @@ import sys
 import urllib.error
 import urllib.request
 
-ORCH = os.environ.get("ORCHESTRATOR", "http://192.168.50.154:9000")
+ORCH = os.environ.get("ORCHESTRATOR", "http://127.0.0.1:9000")
 STATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "snapshot.json")
 TIMEOUT = 30
 

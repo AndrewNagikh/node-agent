@@ -5,7 +5,7 @@ Date: 2026-07-06
 **Run ID:** `20260706_200851`  
 **Profile:** `homelab_full`  
 **Mode:** `homelab` (physical LAN, no Docker)  
-**Orchestrator:** `http://192.168.50.154:9000`  
+**Orchestrator:** `http://192.0.2.10:9000`  
 **Artifacts:** `logs/benchmark/homelab_full_20260706_230800/`
 
 Generated files:
@@ -38,10 +38,10 @@ These numbers are end-to-end HTTP latency (prefill + 3-node pipeline decode + or
 
 | Role | Node | Host | Hardware | RAM free/total | VRAM free/total |
 |------|------|------|----------|----------------|-----------------|
-| Orchestrator | homelab | 192.168.50.154:9000 | — | — | — |
-| node-a | Mac | 192.168.50.42:9001 | Apple M3 Pro | 16.0 / 19.3 GB | 14.3 / 14.3 GB |
-| node-b | Mac | 192.168.50.254:9002 | Apple M1 Pro | 13.2 / 17.2 GB | 11.5 / 11.5 GB |
-| node-c | Windows | 192.168.50.51:9003 | RTX 4070 Ti | 20.5 / 33.5 GB | 11.6 / 12.9 GB |
+| Orchestrator | homelab | 192.0.2.10:9000 | — | — | — |
+| node-a | Mac | 192.0.2.11:9001 | Apple M3 Pro | 16.0 / 19.3 GB | 14.3 / 14.3 GB |
+| node-b | Mac | 192.0.2.12:9002 | Apple M1 Pro | 13.2 / 17.2 GB | 11.5 / 11.5 GB |
+| node-c | Windows | 192.0.2.13:9003 | RTX 4070 Ti | 20.5 / 33.5 GB | 11.6 / 12.9 GB |
 
 **Combined cluster (at report time):** ~49.7 GB free RAM + ~37.4 GB free VRAM across 3 nodes.
 

@@ -4,7 +4,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PROFILE="${BENCHMARK_PROFILE:-homelab_full}"
-ORCHESTRATOR="${ORCHESTRATOR:-http://192.168.50.154:9000}"
+ORCHESTRATOR="${ORCHESTRATOR:-http://127.0.0.1:9000}"
 RUN_ID="$(date +%Y%m%d_%H%M%S)"
 OUT_DIR="${BENCHMARK_OUTPUT_DIR:-$ROOT/logs/benchmark/homelab_full_$RUN_ID}"
 PROFILE_RUNTIME="${BENCHMARK_PROFILE_RUNTIME:-0}"

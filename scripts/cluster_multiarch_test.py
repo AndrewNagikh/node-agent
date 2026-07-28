@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-ORCH = os.environ.get("ORCHESTRATOR", "http://192.168.50.154:9000")
+ORCH = os.environ.get("ORCHESTRATOR", "http://127.0.0.1:9000")
 ROOT = Path(__file__).resolve().parents[1]
 ENV_FILE = ROOT / ".env"
 LOG_DIR = ROOT / "logs"

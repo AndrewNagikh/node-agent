@@ -126,6 +126,6 @@ python3 docs/bench/2026-07-23_g1_ceiling/measure_ceiling.py qwen3-30b
 ```
 
 Requires the target model `coverage: READY` and the orchestrator reachable
-at `192.168.50.154:9000` (env `ORCHESTRATOR` to override). Run it multiple
+at `192.0.2.10:9000` (env `ORCHESTRATOR` to override). Run it multiple
 times and look at the spread, not a single sample — this report's own
 history is the cautionary example why.
