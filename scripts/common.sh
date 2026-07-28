@@ -2,8 +2,11 @@
 # Shared helpers for run-agent.sh and run-orchestrator.sh
 
 # Load nodes.conf (or nodes.conf.example as a fallback) so launches only
-# need NODE_ID. Only known ORCHESTRATOR_*/NODE_*_HOST/NODE_*_PORT keys are
-# read from the file; anything already set in the environment wins.
+# need NODE_ID. Any *_HOST / *_PORT key is accepted, so a cluster can have as
+# many nodes as it likes with whatever ids you choose -- the previous
+# enumerated whitelist capped it at node-a/b/c and silently dropped anything
+# else, which meant a fourth machine could not join without editing this file.
+# Anything already set in the environment wins.
 node_agent_load_topology() {
   local root="$1"
   local conf="$root/nodes.conf"
@@ -18,12 +21,23 @@ node_agent_load_topology() {
     [[ "$line" != *=* ]] && continue
     key="${line%%=*}"
     val="${line#*=}"
+    # Must be a valid shell identifier before printf -v touches it.
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
     case "$key" in
-      ORCHESTRATOR_HOST|ORCHESTRATOR_PORT|NODE_A_HOST|NODE_A_PORT|NODE_B_HOST|NODE_B_PORT|NODE_C_HOST|NODE_C_PORT)
+      *_HOST|*_PORT)
         [[ -z "${!key:-}" ]] && printf -v "$key" '%s' "$val"
         ;;
     esac
   done < "$conf"
+}
+
+# node id -> config key prefix: node-a -> NODE_A, garage-pc -> GARAGE_PC.
+# Same transform the dashboard uses, so both read the same nodes.conf.
+node_agent_topology_key_prefix() {
+  local id="${1:-}"
+  id="$(echo "$id" | tr '[:lower:]-' '[:upper:]_')"
+  [[ "$id" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+  echo "$id"
 }
 
 node_agent_topology_orchestrator_url() {
@@ -33,19 +47,17 @@ node_agent_topology_orchestrator_url() {
 }
 
 node_agent_topology_node_host() {
-  case "${1:-}" in
-    node-a) echo "${NODE_A_HOST:-}" ;;
-    node-b) echo "${NODE_B_HOST:-}" ;;
-    node-c) echo "${NODE_C_HOST:-}" ;;
-  esac
+  local prefix
+  prefix="$(node_agent_topology_key_prefix "${1:-}")" || return 0
+  local key="${prefix}_HOST"
+  echo "${!key:-}"
 }
 
 node_agent_topology_node_port() {
-  case "${1:-}" in
-    node-a) echo "${NODE_A_PORT:-}" ;;
-    node-b) echo "${NODE_B_PORT:-}" ;;
-    node-c) echo "${NODE_C_PORT:-}" ;;
-  esac
+  local prefix
+  prefix="$(node_agent_topology_key_prefix "${1:-}")" || return 0
+  local key="${prefix}_PORT"
+  echo "${!key:-}"
 }
 
 # Parse `KEY=value` positional args (make-style), e.g. `NODE_ID=node-a`, in

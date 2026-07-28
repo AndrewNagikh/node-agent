@@ -66,9 +66,9 @@ function Load-Topology {
     $conf = Join-Path $RootDir "nodes.conf"
     if (-not (Test-Path $conf)) { $conf = Join-Path $RootDir "nodes.conf.example" }
     if (-not (Test-Path $conf)) { return @{} }
-    $known = @("ORCHESTRATOR_HOST", "ORCHESTRATOR_PORT",
-               "NODE_A_HOST", "NODE_A_PORT", "NODE_B_HOST", "NODE_B_PORT",
-               "NODE_C_HOST", "NODE_C_PORT")
+    # Any *_HOST / *_PORT key is accepted, so the cluster can have any number
+    # of nodes with ids of your choosing. The previous enumerated list capped
+    # it at node-a/b/c and silently dropped anything else.
     $topo = @{}
     Get-Content $conf | ForEach-Object {
         $line = ($_ -replace '#.*$', '').Trim()
@@ -76,7 +76,8 @@ function Load-Topology {
         $eq = $line.IndexOf('=')
         $key = $line.Substring(0, $eq).Trim()
         $val = $line.Substring($eq + 1).Trim()
-        if ($known -contains $key) { $topo[$key] = $val }
+        if ($key -match '^[A-Za-z_][A-Za-z0-9_]*$' -and
+            ($key -like '*_HOST' -or $key -like '*_PORT')) { $topo[$key] = $val }
     }
     return $topo
 }
@@ -221,9 +222,13 @@ if (-not $resolved) {
 $BinDir = $resolved.BinDir
 $Bin = $resolved.Bin
 
+# Convenience defaults only -- any node id works as long as nodes.conf gives
+# it a <ID>_PORT (read above) or -Port is passed explicitly.
 $ports = @{ "node-a" = 9001; "node-b" = 9002; "node-c" = 9003 }
-if ($Port -eq 0) { $Port = $ports[$NodeId] }
-if (-not $Port) { throw "unknown NodeId $NodeId (use node-a, node-b, node-c)" }
+if ($Port -eq 0 -and $ports.ContainsKey($NodeId)) { $Port = $ports[$NodeId] }
+if (-not $Port) {
+    throw "no port for NodeId '$NodeId' -- add $($NodeId.ToUpper() -replace '-', '_')_PORT to nodes.conf or pass -Port"
+}
 
 if ($Firewall -or $ConfigureFirewallOnly) {
     Ensure-FirewallRules -HttpPort $Port

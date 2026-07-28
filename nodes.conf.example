@@ -11,6 +11,19 @@
 #
 # Everything here can still be overridden per-run, e.g.:
 #   ./run-agent.sh NODE_ID=node-a ORCHESTRATOR=http://10.0.0.5:9000
+#
+# ---------------------------------------------------------------------------
+# Any number of nodes, any ids. A node id maps to its keys by uppercasing and
+# turning '-' into '_':
+#
+#   node-a     -> NODE_A_HOST     / NODE_A_PORT
+#   node-d     -> NODE_D_HOST     / NODE_D_PORT
+#   garage-pc  -> GARAGE_PC_HOST  / GARAGE_PC_PORT
+#
+# Add as many as you have machines; three below is just this cluster, not a
+# limit. The runtime assigns pipeline roles by position, so it takes whatever
+# number of nodes register.
+# ---------------------------------------------------------------------------
 
 ORCHESTRATOR_HOST=192.168.50.154
 ORCHESTRATOR_PORT=9000
@@ -23,3 +36,7 @@ NODE_B_PORT=9002
 
 NODE_C_HOST=192.168.50.51
 NODE_C_PORT=9003
+
+# A fourth machine needs nothing but its own two lines:
+# NODE_D_HOST=192.168.50.60
+# NODE_D_PORT=9004

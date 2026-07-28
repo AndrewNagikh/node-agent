@@ -30,19 +30,39 @@ function Setup({ onSaved }) {
       <div style={{ fontSize: 12.5, color: COLORS.dim, marginBottom: 20 }}>
         Запуск приложения = регистрация этой машины как ноды в оркестраторе.
       </div>
+      {/* Free text, not a fixed list: a cluster can have any number of nodes
+          with any ids. The id maps to nodes.conf keys by uppercasing and
+          turning '-' into '_' (node-d -> NODE_D_HOST / NODE_D_PORT). */}
       <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12, color: COLORS.dim, marginBottom: 14 }}>
         node id
-        <select value={nodeId} onChange={(e) => setNodeId(e.target.value)} style={{ background: COLORS.bg, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '8px 10px', color: COLORS.text, ...mono }}>
-          <option value="node-a">node-a</option>
-          <option value="node-b">node-b</option>
-          <option value="node-c">node-c</option>
-        </select>
+        <input
+          value={nodeId}
+          onChange={(e) => setNodeId(e.target.value.trim())}
+          placeholder="node-a"
+          spellCheck={false}
+          style={{ background: COLORS.bg, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '8px 10px', color: COLORS.text, ...mono }}
+        />
+        <span style={{ fontSize: 10.5, color: COLORS.dim3 }}>
+          любой идентификатор; host и порт возьмутся из nodes.conf по ключам{' '}
+          {(nodeId || 'node-a').toUpperCase().replace(/-/g, '_')}_HOST / _PORT
+        </span>
       </label>
       <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12, color: COLORS.dim, marginBottom: 20 }}>
         orchestrator url <span style={{ color: COLORS.dim3 }}>(пусто — взять из nodes.conf)</span>
         <input value={orchestrator} onChange={(e) => setOrchestrator(e.target.value)} placeholder="http://192.168.50.154:9000" style={{ background: COLORS.bg, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '8px 10px', color: COLORS.text, ...mono }} />
       </label>
-      <button onClick={save} disabled={saving} style={{ padding: '8px 16px', borderRadius: 6, fontWeight: 500, cursor: saving ? 'default' : 'pointer', border: '1px solid rgba(86,227,154,.5)', background: 'rgba(86,227,154,.12)', color: '#7bebac' }}>
+      {/* The id became free text, so an empty one is now possible where the
+          old dropdown made it impossible. */}
+      <button
+        onClick={save}
+        disabled={saving || !nodeId}
+        style={{
+          padding: '8px 16px', borderRadius: 6, fontWeight: 500,
+          cursor: saving || !nodeId ? 'default' : 'pointer',
+          border: '1px solid rgba(86,227,154,.5)', background: 'rgba(86,227,154,.12)',
+          color: '#7bebac', opacity: !nodeId ? 0.5 : 1,
+        }}
+      >
         {saving ? 'Запускаю…' : 'Сохранить и запустить'}
       </button>
     </div>
