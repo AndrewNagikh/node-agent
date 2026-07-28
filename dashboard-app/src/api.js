@@ -83,11 +83,18 @@ export async function fetchInstallPlan(orchestratorUrl, modelId) {
     downloadBytes: plan.total_download_bytes ?? 0,
     downloads: ops.filter((o) => o.action === 'DOWNLOAD').length,
     deletes: ops.filter((o) => o.action === 'DELETE').length,
+    // Present when the model is UNAVAILABLE: names the machine to switch on,
+    // which is the free fix compared to re-downloading its share.
+    warning: res.warning || null,
   };
 }
 
-export async function startInstall(orchestratorUrl, modelId) {
-  return postJson(`${orchestratorUrl}/models/${modelId}/install/execute`, {});
+// `confirmUnavailable` states that the offline node holding this model's
+// layers is not coming back. Without it the orchestrator refuses (409) rather
+// than re-downloading layers that are sitting on a switched-off machine.
+export async function startInstall(orchestratorUrl, modelId, confirmUnavailable = false) {
+  return postJson(`${orchestratorUrl}/models/${modelId}/install/execute`,
+    confirmUnavailable ? { confirm_unavailable: true } : {});
 }
 
 export async function fetchJob(orchestratorUrl, jobId) {

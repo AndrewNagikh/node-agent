@@ -58,6 +58,7 @@ function InstalledModelRow({ model, orchestrator }) {
   const [plan, setPlan] = useState(null);
   const [job, setJob] = useState(null);
   const [phase, setPhase] = useState('idle'); // idle|planning|running|refreshing|done|error
+  const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState(null);
   const cancelled = useRef(false);
 
@@ -67,16 +68,25 @@ function InstalledModelRow({ model, orchestrator }) {
   const covState = cov.state || null;
   const missing = cov.missing_layers ?? 0;
   const unavailable = cov.unavailable_layers ?? 0;
-  // UNAVAILABLE is deliberately not repairable: the layers are intact on a
-  // node that is off, and the only useful action is turning it back on.
-  // Offering "восстановить" here is what led to repairing models that were
-  // never broken -- and a repair plan against an absent node deletes and
-  // re-downloads layers that were fine.
-  const needsRepair = covState && covState !== 'READY' && covState !== 'UNAVAILABLE';
+  const needsRepair = covState && covState !== 'READY';
+  // UNAVAILABLE is repairable, but never silently: the layers are intact on a
+  // machine that is switched off, so repairing means re-downloading them and
+  // spreading them over whoever is left. Free if you just turn that machine
+  // on, expensive and irreversible if you don't. Hence the confirm step.
+  const isUnavailable = covState === 'UNAVAILABLE';
+  const offlineNodes = (cov.unavailable_nodes || []).join(", ");
   const statusColor = STATUS_COLOR[model.status] || COLORS.dim;
   const covColor = COVERAGE_COLOR[covState] || COLORS.dim3;
 
-  const repair = async () => {
+  // Clicking "восстановить" on an UNAVAILABLE model asks first; anything else
+  // repairs straight away, as before.
+  const onRepairClick = () => {
+    if (isUnavailable) setConfirming(true);
+    else repair(false);
+  };
+
+  const repair = async (confirmUnavailable) => {
+    setConfirming(false);
     setError(null);
     setPhase('planning');
     try {
@@ -92,7 +102,7 @@ function InstalledModelRow({ model, orchestrator }) {
         return;
       }
 
-      const started = await startInstall(orchestrator, model.model_id);
+      const started = await startInstall(orchestrator, model.model_id, confirmUnavailable);
       const jobId = started.job_id;
       setPhase('running');
 
@@ -152,7 +162,7 @@ function InstalledModelRow({ model, orchestrator }) {
             only partially succeeded can be retried rather than looking done. */}
         {(needsRepair || phase === 'error') && !busy && (
           <button
-            onClick={repair}
+            onClick={onRepairClick}
             disabled={busy}
             style={{
               padding: '4px 12px', borderRadius: 5, fontSize: 11, ...mono,
@@ -173,9 +183,51 @@ function InstalledModelRow({ model, orchestrator }) {
         </div>
       )}
 
-      {covState === 'UNAVAILABLE' && phase === 'idle' && (
+      {covState === 'UNAVAILABLE' && phase === 'idle' && !confirming && (
         <div style={{ ...mono, fontSize: 10.5, color: COLORS.dim3 }}>
           слоёв на выключенных нодах: {unavailable} — данные целы, вернутся вместе с нодой
+        </div>
+      )}
+
+      {confirming && (
+        <div style={{
+          border: `1px solid ${COLORS.amber}55`, borderRadius: 6, padding: '12px 14px',
+          background: 'rgba(255,176,66,.06)', display: 'flex', flexDirection: 'column', gap: 10,
+        }}>
+          <div style={{ ...mono, fontSize: 11.5, color: COLORS.amber, fontWeight: 600 }}>
+            Модель в статусе UNAVAILABLE
+          </div>
+          <div style={{ ...mono, fontSize: 11, color: COLORS.text, lineHeight: 1.55 }}>
+            {unavailable} слоёв находятся на {offlineNodes ? `ноде ${offlineNodes}` : 'выключенной ноде'},
+            которая сейчас не отвечает. Эти данные целы и лежат у неё на диске.
+            <br /><br />
+            <b>Проще всего — запустить {offlineNodes || 'эту ноду'}</b>: модель вернётся сама,
+            без единого переданного байта.
+            <br /><br />
+            Если продолжить, недостающие слои будут <b>скачаны заново из интернета</b> и
+            распределены по онлайн-нодам. Делайте это, только если нода не вернётся.
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={() => setConfirming(false)}
+              style={{
+                padding: '5px 14px', borderRadius: 5, fontSize: 11, ...mono, cursor: 'pointer',
+                border: `1px solid ${COLORS.border}`, background: 'transparent', color: COLORS.dim,
+              }}
+            >
+              отменить
+            </button>
+            <button
+              onClick={() => repair(true)}
+              style={{
+                padding: '5px 14px', borderRadius: 5, fontSize: 11, ...mono, cursor: 'pointer',
+                border: '1px solid rgba(255,176,66,.45)',
+                background: 'rgba(255,176,66,.14)', color: COLORS.amber,
+              }}
+            >
+              продолжить и скачать заново
+            </button>
+          </div>
         </div>
       )}
 
