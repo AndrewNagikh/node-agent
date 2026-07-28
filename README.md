@@ -122,13 +122,22 @@ git submodule update --init --recursive
 ./build.sh all      # + orchestrator
 ```
 
-Copy `nodes.conf.example` to `nodes.conf` and fill in your LAN IPs and ports.
-With it present, every launch needs only a node id:
+Tell the nodes where the orchestrator is. That is the only address anyone has
+to type — each machine detects its own and advertises it when it registers, so
+the orchestrator learns the rest of the topology by itself.
+
+```bash
+export ORCHESTRATOR=http://192.0.2.10:9000
+```
+
+Or put it in a config file instead, if you prefer it persisted:
 
 ```bash
 cp nodes.conf.example nodes.conf
-$EDITOR nodes.conf   # ORCHESTRATOR_HOST, NODE_A_HOST, NODE_B_HOST, NODE_C_HOST, ports
+$EDITOR nodes.conf   # ORCHESTRATOR_HOST -- the other keys are optional overrides
 ```
+
+The dashboard has a field for it too, asked once and remembered.
 
 Then, one command per machine:
 

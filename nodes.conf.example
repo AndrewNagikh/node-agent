@@ -1,42 +1,48 @@
-# Homelab cluster topology defaults for run-agent.sh / run-agent.ps1 / run-orchestrator.sh.
+# Cluster config for run-agent.sh / run-agent.ps1 / run-orchestrator.sh and
+# the dashboard.
 #
-# Copy to nodes.conf (gitignored) and edit for your LAN:
 #   cp nodes.conf.example nodes.conf
 #
-# With this file present, launches only need the node id:
-#   ./run-agent.sh NODE_ID=node-a
-#   ./run-agent.sh NODE_ID=node-b
-#   .\run-agent.ps1 NodeId=node-c        # Windows
-#   ./run-orchestrator.sh
+# You normally need ONE setting: where the orchestrator lives. Everything else
+# is discovered:
 #
-# Everything here can still be overridden per-run, e.g.:
-#   ./run-agent.sh NODE_ID=node-a ORCHESTRATOR=http://10.0.0.5:9000
+#   - each machine detects its own LAN IP and advertises it when it registers,
+#     so the orchestrator learns the topology from the nodes themselves;
+#   - the agent's port defaults to 9001, which is right when a machine runs a
+#     single agent (the usual case);
+#   - nothing anywhere needs to know how many nodes exist, or which. Pipeline
+#     roles are assigned by position among whoever has registered.
 #
-# ---------------------------------------------------------------------------
-# Any number of nodes, any ids. A node id maps to its keys by uppercasing and
-# turning '-' into '_':
+# So a new machine joins with just:
 #
-#   node-a     -> NODE_A_HOST     / NODE_A_PORT
-#   node-d     -> NODE_D_HOST     / NODE_D_PORT
-#   garage-pc  -> GARAGE_PC_HOST  / GARAGE_PC_PORT
+#   ./run-agent.sh NODE_ID=node-d
+#   .\run-agent.ps1 NodeId=node-d        # Windows
 #
-# Add as many as you have machines; three below is just this cluster, not a
-# limit. The runtime assigns pipeline roles by position, so it takes whatever
-# number of nodes register.
-# ---------------------------------------------------------------------------
+# The node id only has to be unique -- it is a label, not an address.
 
-ORCHESTRATOR_HOST=192.168.50.154
+# --- the one setting that matters -------------------------------------------
+# Where the orchestrator is reachable. On the orchestrator's own machine this
+# can stay as it is.
+#
+# It can also be given without this file, which is often easier:
+#   export ORCHESTRATOR=http://192.0.2.10:9000
+#   ./run-agent.sh NODE_ID=node-a ORCHESTRATOR=http://192.0.2.10:9000
+#   ...or typed into the dashboard's "orchestrator url" field once.
+
+ORCHESTRATOR_HOST=127.0.0.1
 ORCHESTRATOR_PORT=9000
 
-NODE_A_HOST=192.168.50.42
-NODE_A_PORT=9001
-
-NODE_B_HOST=192.168.50.254
-NODE_B_PORT=9002
-
-NODE_C_HOST=192.168.50.51
-NODE_C_PORT=9003
-
-# A fourth machine needs nothing but its own two lines:
-# NODE_D_HOST=192.168.50.60
-# NODE_D_PORT=9004
+# --- optional overrides -----------------------------------------------------
+# Only needed when auto-detection gets it wrong or you want fixed values --
+# a machine with several interfaces where the wrong one is picked, or two
+# agents sharing one host and so needing different ports.
+#
+# A node id maps to its keys by uppercasing and turning '-' into '_':
+#
+#   node-a     -> NODE_A_HOST     / NODE_A_PORT
+#   garage-pc  -> GARAGE_PC_HOST  / GARAGE_PC_PORT
+#
+# No limit on how many you list, and no requirement to list any.
+#
+# NODE_A_HOST=192.0.2.11
+# NODE_A_PORT=9001

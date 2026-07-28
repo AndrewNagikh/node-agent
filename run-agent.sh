@@ -11,18 +11,21 @@ usage: $0 [NODE_ID=node-a] [KEY=value ...] [options]
 
 Start a distributed node agent (auto-detects GPU at build time, benchmarks on startup).
 
-With nodes.conf present (copy from nodes.conf.example and edit for your LAN),
-the only thing you need per machine is the node id:
+Per machine you need the node id and where the orchestrator is. This machine's
+own address is detected, so it never has to be configured:
+
+  ORCHESTRATOR=http://<orchestrator-host>:9000 ./run-agent.sh NODE_ID=node-a
+
+Set ORCHESTRATOR_HOST in nodes.conf (or export ORCHESTRATOR) and the id alone
+is enough:
 
   ./run-agent.sh NODE_ID=node-a
-  ./run-agent.sh NODE_ID=node-b
-  ./run-agent.sh NODE_ID=node-c
 
 KEY=value args (any can be omitted; falls back to nodes.conf, then env, then default):
-  NODE_ID=node-a|node-b|node-c   (default: node-a)
+  NODE_ID=<any unique label>     (default: node-a)
   ORCHESTRATOR=http://host:9000
-  PORT=9001
-  ADVERTISE_HOST=192.168.1.10
+  PORT=9001                      (default; set only to run two agents on one host)
+  ADVERTISE_HOST=<ip>            (default: this machine's detected LAN IP)
   MODELS_DIR=/path/to/store
   MODEL=/path/to/model.gguf      (legacy; layer-first mode omits this)
   NODE_LOG=1                     (default; tees stdout/stderr to
@@ -48,8 +51,8 @@ Options (equivalent --flag form, still supported):
 Examples:
   ./run-agent.sh NODE_ID=node-b
   ./run-agent.sh NODE_ID=node-c REBENCHMARK=1
-  ORCHESTRATOR=http://192.168.50.154:9000 NODE_ID=node-b $0
-  $0 --orchestrator http://192.168.50.154:9000 --node-id node-c --rebenchmark
+  ORCHESTRATOR=http://192.0.2.10:9000 NODE_ID=node-b $0
+  $0 --orchestrator http://192.0.2.10:9000 --node-id node-c --rebenchmark
 EOF
 }
 
@@ -109,10 +112,16 @@ if [[ "$DO_BUILD" == true ]]; then
 fi
 
 PORT="${PORT:-$(node_agent_default_port "$NODE_ID")}"
+# Address this node advertises when it registers: explicit flag/env first,
+# then a nodes.conf override, then this machine's own detected LAN IP.
+# Detection is the normal path -- a machine knows its own address, so the
+# config never has to carry it.
 if [[ -z "$ADVERTISE_HOST" ]]; then
   ADVERTISE_HOST="$(node_agent_topology_node_host "$NODE_ID")"
 fi
-ADVERTISE_HOST="$(node_agent_detect_lan_ip)"
+if [[ -z "$ADVERTISE_HOST" ]]; then
+  ADVERTISE_HOST="$(node_agent_detect_lan_ip)"
+fi
 node_agent_ensure_hf_token "$ROOT"
 if [[ -z "$MODELS_DIR" ]]; then
   MODELS_DIR="$HOME/.distributed-llm/models"

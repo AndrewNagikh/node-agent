@@ -16,8 +16,14 @@ const CONFIG_PATH = path.join(app.getPath('userData'), 'dashboard-config.json');
 // --- nodes.conf (shared with run-agent.sh/.ps1) -----------------------
 
 function parseNodesConf() {
-  const confPath = path.join(REPO_ROOT, 'nodes.conf');
+  // Fall back to the template, same as run-agent.sh/.ps1 do. Without this the
+  // shell launchers would work on a fresh clone while the dashboard silently
+  // found nothing.
+  let confPath = path.join(REPO_ROOT, 'nodes.conf');
   const out = {};
+  if (!fs.existsSync(confPath)) {
+    confPath = path.join(REPO_ROOT, 'nodes.conf.example');
+  }
   if (!fs.existsSync(confPath)) {
     return out;
   }
@@ -44,10 +50,38 @@ function saveDashboardConfig(cfg) {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
 }
 
+// This machine's LAN address, for the node to advertise when it registers.
+// Detected rather than configured: a machine knows its own IP, so making the
+// user write every node's address into nodes.conf was asking them for
+// something the program could find out. Mirrors node_agent_detect_lan_ip()
+// in scripts/common.sh.
+//
+// Picks the first non-internal IPv4, skipping the virtual interfaces that
+// Docker/VMs/WSL add and that are never reachable from other machines.
+function detectLanIp() {
+  const skip = /^(docker|br-|veth|virbr|vmnet|vboxnet|utun|awdl|llw|tun|tap|zt)/i;
+  const candidates = [];
+  for (const [name, addrs] of Object.entries(os.networkInterfaces())) {
+    if (skip.test(name)) continue;
+    for (const addr of addrs || []) {
+      if (addr.family !== 'IPv4' || addr.internal) continue;
+      // 169.254/16 is link-local: an address a machine gives itself when DHCP
+      // failed, so it means "no usable network", not "here I am".
+      if (addr.address.startsWith('169.254.')) continue;
+      candidates.push(addr.address);
+    }
+  }
+  // Prefer a private-range address: on a machine with both, the LAN one is
+  // what the other nodes can actually reach.
+  const priv = candidates.find((ip) =>
+    ip.startsWith('192.168.') || ip.startsWith('10.') || /^172\.(1[6-9]|2\d|3[01])\./.test(ip));
+  return priv || candidates[0] || '';
+}
+
 // Resolves this machine's node id, host, port, and orchestrator URL from
-// (in order): saved dashboard config, nodes.conf, sane defaults. NODE_ID
-// itself still has to be chosen once per machine -- there's no way to
-// infer "which of node-a/b/c am I" automatically.
+// (in order): saved dashboard config, env, nodes.conf, then detection or a
+// default. Only the node id and the orchestrator URL are genuinely user
+// input -- and the id is just a unique label, not an address.
 function resolveConfig() {
   const saved = loadDashboardConfig();
   const conf = parseNodesConf();
@@ -64,6 +98,11 @@ function resolveConfig() {
     if (!host && conf[`${prefix}_HOST`]) host = conf[`${prefix}_HOST`];
     if (!port && conf[`${prefix}_PORT`]) port = Number(conf[`${prefix}_PORT`]);
   }
+  // Last resorts, so an unconfigured machine still starts: its own address,
+  // and the one-agent-per-machine port. 9001 is a default, not an assumption
+  // about which node this is -- set <ID>_PORT to run two agents on one host.
+  if (!host) host = detectLanIp();
+  if (!port) port = 9001;
   return { nodeId, orchestrator, host, port, modelsDir: saved?.modelsDir || '' };
 }
 

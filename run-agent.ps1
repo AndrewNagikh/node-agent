@@ -222,13 +222,11 @@ if (-not $resolved) {
 $BinDir = $resolved.BinDir
 $Bin = $resolved.Bin
 
-# Convenience defaults only -- any node id works as long as nodes.conf gives
-# it a <ID>_PORT (read above) or -Port is passed explicitly.
-$ports = @{ "node-a" = 9001; "node-b" = 9002; "node-c" = 9003 }
-if ($Port -eq 0 -and $ports.ContainsKey($NodeId)) { $Port = $ports[$NodeId] }
-if (-not $Port) {
-    throw "no port for NodeId '$NodeId' -- add $($NodeId.ToUpper() -replace '-', '_')_PORT to nodes.conf or pass -Port"
-}
+# One agent per machine is the normal case, so a single default works for any
+# node id. Refusing to start without a <ID>_PORT entry made adding a machine a
+# config edit for no reason -- set the key (or -Port) only to run two agents on
+# one host.
+if (-not $Port) { $Port = 9001 }
 
 if ($Firewall -or $ConfigureFirewallOnly) {
     Ensure-FirewallRules -HttpPort $Port

@@ -31,8 +31,8 @@ function Setup({ onSaved }) {
         Запуск приложения = регистрация этой машины как ноды в оркестраторе.
       </div>
       {/* Free text, not a fixed list: a cluster can have any number of nodes
-          with any ids. The id maps to nodes.conf keys by uppercasing and
-          turning '-' into '_' (node-d -> NODE_D_HOST / NODE_D_PORT). */}
+          with any ids. The id is only a unique label -- this machine's address
+          is detected, not configured, so nothing here has to be an IP. */}
       <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12, color: COLORS.dim, marginBottom: 14 }}>
         node id
         <input
@@ -43,13 +43,17 @@ function Setup({ onSaved }) {
           style={{ background: COLORS.bg, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '8px 10px', color: COLORS.text, ...mono }}
         />
         <span style={{ fontSize: 10.5, color: COLORS.dim3 }}>
-          любой идентификатор; host и порт возьмутся из nodes.conf по ключам{' '}
-          {(nodeId || 'node-a').toUpperCase().replace(/-/g, '_')}_HOST / _PORT
+          любое уникальное имя машины — просто метка. IP определится сам;
+          задать вручную можно ключами{' '}
+          {(nodeId || 'node-a').toUpperCase().replace(/-/g, '_')}_HOST / _PORT в nodes.conf
         </span>
       </label>
       <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12, color: COLORS.dim, marginBottom: 20 }}>
-        orchestrator url <span style={{ color: COLORS.dim3 }}>(пусто — взять из nodes.conf)</span>
-        <input value={orchestrator} onChange={(e) => setOrchestrator(e.target.value)} placeholder="http://192.168.50.154:9000" style={{ background: COLORS.bg, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '8px 10px', color: COLORS.text, ...mono }} />
+        orchestrator url <span style={{ color: COLORS.dim3 }}>(единственный адрес, который нужно знать)</span>
+        <input value={orchestrator} onChange={(e) => setOrchestrator(e.target.value)} placeholder="http://192.0.2.10:9000" style={{ background: COLORS.bg, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '8px 10px', color: COLORS.text, ...mono }} />
+        <span style={{ fontSize: 10.5, color: COLORS.dim3 }}>
+          пусто — возьмётся из ORCHESTRATOR или nodes.conf
+        </span>
       </label>
       {/* The id became free text, so an empty one is now possible where the
           old dropdown made it impossible. */}

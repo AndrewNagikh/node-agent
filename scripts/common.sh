@@ -133,12 +133,10 @@ node_agent_default_port() {
     echo "$from_topology"
     return
   fi
-  case "${1:-}" in
-    node-a) echo 9001 ;;
-    node-b) echo 9002 ;;
-    node-c) echo 9003 ;;
-    *)      echo 9001 ;;
-  esac
+  # One agent per machine is the normal case, so the same default suits any
+  # node id. The old node-a/b/c table implied the ids were special; they are
+  # just labels. Set <ID>_PORT to run two agents on one host.
+  echo 9001
 }
 
 # Legacy helper: only returns MODEL when explicitly set (no auto-discovery).
