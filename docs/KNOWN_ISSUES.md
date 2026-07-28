@@ -32,6 +32,33 @@ is now an explicit, unit-tested pure function (`layout_policy.h`,
 `b8ad88d`) but is **not yet wired into the orchestrator** -- that changes
 a destructive path and wants the cluster available to verify.
 
+### Verify waves are not batched: ~(k+1) stage-computes per wave
+Hidden-state injection on stages with `layer_start > 0` runs one token at
+a time, because KV is written per position. So verifying a k-token wave
+costs about `k+1` stage-computes instead of the ~1 that batching would
+give; only the fixed per-wave cost `F` (network hops, dispatch) is
+amortized. Measured and written up in `TASK_19_SPECULATIVE_PIPELINE_STUDY.md`
+§D, which already called the fix "the single most valuable runtime
+upgrade."
+
+Not a defect -- results are correct -- but it is the ceiling on
+speculative decoding here, and it is easy to forget when reasoning about
+cost, because the natural assumption is that a wave batches like prefill
+does. It has now cost us twice:
+
+- It is why speculation needs a *high* acceptance rate to pay off at all.
+  At 19% (the 70B + 1B pair below) a wave produces ~1.23 tokens for 5
+  stage-computes, which is why that pair showed no speedup.
+- It closed Task 20 (tree speculation) outright on 2026-07-28. That plan
+  assumed verify cost grows sub-linearly in candidate count; under the
+  real sequential behaviour a width-2 tree projects to 0.21x throughput
+  against a 1.10 stop-threshold. See
+  [PHASE0_REPORT.md](bench/2026-07-27_tree_spec_phase0/PHASE0_REPORT.md).
+
+Fixing it (KV-correct batched hidden injection) would speed up the linear
+speculation already in production and is the prerequisite for reopening
+Task 20 -- in that order of importance.
+
 ### Coverage is reported stale and read as breakage
 Coverage is computed at whatever moment it happens to run and then
 served from the registry without any indication of when it was taken. On

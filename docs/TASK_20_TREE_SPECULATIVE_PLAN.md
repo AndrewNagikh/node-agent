@@ -1,5 +1,30 @@
 # Task 20 -- Tree/Ensemble Speculative Decoding (plan)
 
+> **CLOSED 2026-07-28 -- NO-GO. Phase 0 ran and the answer was no.**
+>
+> Measured acceptance on Llama-3.2 3B+1B: 80.21% at draft top-1, 92.01%
+> within top-2, 95.49% within top-3 (288 greedy steps). That is a healthy
+> E-ratio of 1.263 for a width-2 tree -- and it still fails, because §0.5's
+> estimate of `T_verify_tree` was wrong in our favour.
+>
+> §0.5 assumed verify cost grows sub-linearly in candidate count, since a
+> batch reads model weights once. **Task 19 §D had already measured that
+> this project's verify wave is not batched**: hidden-state injection on
+> stages with `layer_start > 0` runs one token at a time, costing ~(k+1)
+> stage-computes. Verify cost is therefore linear in candidates, giving a
+> projected `throughput_ratio` of **0.21** (width 2, depth 4) and **0.57**
+> for the smallest prototype this plan permits -- against a stop-threshold
+> of 1.10.
+>
+> Prerequisite before any of this is worth reopening: KV-correct batched
+> hidden injection (Task 19 §D's own "single most valuable runtime
+> upgrade"), which would also speed up the linear speculation already
+> shipping. Full result and arithmetic:
+> [bench/2026-07-27_tree_spec_phase0/PHASE0_REPORT.md](bench/2026-07-27_tree_spec_phase0/PHASE0_REPORT.md).
+>
+> Sections below are the original plan, kept for the reasoning and the
+> literature survey. Phases 1-3 were never started.
+
 Status: PLANNING, not started. Written 2026-07-22 as a follow-on to Task 19
 (linear speculative decoding, entry-buffered draft, adaptive wait window).
 Task 19's mechanism stays as-is and in production use (SPEC_WAIT_POLICY=p80
