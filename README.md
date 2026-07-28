@@ -114,7 +114,7 @@ client →│  entry  │ ───→ │ middle  │ ───→ │  final  
 ## Quick start
 
 ```bash
-git clone --recurse-submodules git@github.com:AndrewNagikh/node-agent.git
+git clone --recurse-submodules https://github.com/AndrewNagikh/node-agent.git
 cd node-agent
 git submodule update --init --recursive
 

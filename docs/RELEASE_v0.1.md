@@ -28,7 +28,7 @@ First stable milestone of the distributed LLM node-agent platform with architect
 ## Quick start
 
 ```bash
-git clone --recurse-submodules git@github.com:AndrewNagikh/node-agent.git
+git clone --recurse-submodules https://github.com/AndrewNagikh/node-agent.git
 cd node-agent
 git checkout v0.1
 ./build.sh all

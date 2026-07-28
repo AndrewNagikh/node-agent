@@ -91,7 +91,8 @@ SKIP_BUILD="SKIP_BUILD_PLACEHOLDER"
 if [[ ! -d "$REPO/.git" ]]; then
   echo "setup-node-c: cloning into $REPO ..."
   mkdir -p "$(dirname "$REPO")"
-  git clone --recurse-submodules git@github.com:AndrewNagikh/node-agent.git "$REPO" || \
+  # HTTPS, not SSH: this runs on a machine being set up for the first time,
+  # which is exactly where no key is configured yet.
   git clone --recurse-submodules https://github.com/AndrewNagikh/node-agent.git "$REPO"
 fi
 
